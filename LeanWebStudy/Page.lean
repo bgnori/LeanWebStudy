@@ -2,11 +2,18 @@ import Lean
 
 namespace LeanWebStudy.Page
 
+structure BoardPost where
+  id : Int
+  author : String
+  message : String
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
 structure Context where
   requestId : Nat
   path : String
   usersHtml : String
   sqliteDemoHtml : String := ""
+  boardPosts : Array BoardPost := #[]
   deriving Lean.ToJson
 
 instance : Lean.FromJson Context where
@@ -15,11 +22,15 @@ instance : Lean.FromJson Context where
     let sqliteDemoHtml <- match fields.get? "sqliteDemoHtml" with
       | some value => value.getStr?
       | none => pure ""
+    let boardPosts <- match fields.get? "boardPosts" with
+      | some value => Lean.fromJson? value
+      | none => pure #[]
     return {
       requestId := ← json.getObjValAs? Nat "requestId"
       path := ← json.getObjValAs? String "path"
       usersHtml := ← json.getObjValAs? String "usersHtml"
-      sqliteDemoHtml }
+      sqliteDemoHtml
+      boardPosts }
 
 def escapeHtml (text : String) : String :=
   text.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"

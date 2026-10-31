@@ -9,4 +9,5 @@ def main : IO Unit :=
         "<h2>習作</h2><ul>" ++
         "<li><a href=\"/sqlite/\">MapleSQLで操作するSQLite</a></li>" ++
         "<li><a href=\"/templates/\">lean-htmlテンプレート</a></li>" ++
+        "<li><a href=\"/board/\">掲示板 Webアプリ</a></li>" ++
         "</ul></body></html>")

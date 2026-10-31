@@ -76,6 +76,7 @@ if grep -q 'href="/maplesql/"' "$work/body"; then
   fail "MapleSQL should not have a separate feature page"
 fi
 grep -q 'href="/templates/"' "$work/body" || fail "Template feature index link"
+grep -q 'href="/board/">掲示板 Webアプリ' "$work/body" || fail "Bulletin board feature index link"
 if grep -q 'SQLiteのユーザー一覧' "$work/body"; then
   fail "Root page should be the feature index, not the SQLite example"
 fi
@@ -152,4 +153,29 @@ if .lake/build/bin/leanwebstudy 65536 >"$work/body" 2>&1; then
 fi
 grep -q 'Port must be between 1 and 65535' "$work/body" || fail "Port error message"
 
-echo "PASS: SQLite-backed HTML and SQL JSON, health, 404/405, 32 concurrent queries, port validation"
+check_status 200 "$base/board/"
+grep -q 'みんなの掲示板' "$work/body" || fail "Bulletin board page title"
+grep -q '<form action="/board/" method="post">' "$work/body" ||
+  fail "lean-html form must submit a POST to the board"
+actual="$(curl -sS --max-time 5 -D "$work/headers" -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'author=Test <admin>' \
+  --data-urlencode 'message=<script>alert(1)</script> & "safe" to the SQLite server' "$base/board/")"
+[[ "$actual" == 303 ]] || fail "Expected bulletin board POST redirect, got $actual"
+tr -d '\r' <"$work/headers" | grep -Fxi 'location: /board/' >/dev/null ||
+  fail "POST must redirect back to the board"
+check_status 200 "$base/board/"
+grep -q '投稿一覧（1件）' "$work/body" || fail "GET must show the SQLite-backed post count"
+grep -q 'Test &lt;admin&gt;' "$work/body" || fail "Post author must be escaped by lean-html"
+grep -qF '&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;safe&quot; to the SQLite server' "$work/body" ||
+  fail "Post body must be escaped by lean-html"
+if grep -q '<script>alert(1)</script>' "$work/body"; then
+  fail "Posted content must not render as executable markup"
+fi
+
+actual="$(curl -sS --max-time 5 -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'author=   ' --data-urlencode 'message=invalid' "$base/board/")"
+[[ "$actual" == 400 ]] || fail "Empty bulletin board author must be rejected"
+check_status 200 "$base/board/"
+grep -q '投稿一覧（1件）' "$work/body" || fail "Invalid post must not be stored"
+
+echo "PASS: bulletin board, SQLite-backed HTML and SQL JSON, health, 404/405, 32 concurrent queries, port validation"

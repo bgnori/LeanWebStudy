@@ -40,12 +40,14 @@ Stop it with Ctrl+C.
 | `GET /sqlite/users` | SQLite users example |
 | `GET /templates/` | HTML template examples index |
 | `GET /templates/lean-html` | lean-html template example |
+| `GET /board/` | SQLite-backed bulletin board page |
+| `POST /board/` | Validate and store a bulletin board post |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
 
-The `/health` and `/api/query` routes and the dynamic page fallback are
-registered with Lithe. Unknown paths return 404. Non-GET requests return 405
-with `Allow: GET`.
+The `/health`, `/api/query`, and `/board/` routes and the dynamic page fallback
+are registered with Lithe. Unknown paths return 404. Unsupported methods return
+405 with an `Allow` header; the board also accepts POST.
 HTTP transport, SQL-generation, and database failures are logged to stderr.
 Failed database requests return HTTP 500 without exposing SQLite error details.
 The shared request counter and database connection are protected by mutexes,
@@ -124,6 +126,7 @@ Pages are loaded from the `Pages/` directory by default. Each feature has an
 
 - `/sqlite/` and `/sqlite/users` (MapleSQL and SQLite)
 - `/templates/` and `/templates/lean-html`
+- `/board/` (SQLite-backed bulletin board)
 
 For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs
 `Pages/blog/new.lean`. Both `/blog` and `/blog/` open the directory index.
@@ -166,10 +169,11 @@ reseed its in-memory database. See the [module reload investigation (Japanese)](
 for the update boundaries, verified behavior, and troubleshooting steps.
 
 The server sends a JSON context on stdin containing `requestId`, the URL `path`,
-HTML-escaped `usersHtml`, and `sqliteDemoHtml` (source attribution, source/SQLite
+HTML-escaped `usersHtml`, `sqliteDemoHtml` (source attribution, source/SQLite
 schemas, MapleSQL statements, generated SQL, separate parameters, and actual
-query results) queried/rendered using its existing SQLite connection.
-`sqliteDemoHtml` defaults to an empty string for older context producers.
+query results) queried/rendered using its existing SQLite connection, and
+`boardPosts` for the bulletin board. Optional context fields default for older
+context producers.
 `Page.run` returns the HTML as a JSON string on stdout; use stderr for page
 diagnostics. The counter and database remain in the server and survive page
 changes and worker failures. Workers do not inherit the live database handle;
@@ -178,6 +182,15 @@ Use `LeanWebStudy.Page.escapeHtml` for any additional untrusted text.
 Compilation, rendering, and protocol failures produce HTTP 500 and diagnostics
 on server stderr, without exposing compiler output in the HTTP response.
 Page responses, including errors and missing pages, use `no-store`.
+
+The bulletin board page uses a lean-html form to submit posts with HTTP POST.
+Lithe parses and validates the form, MapleSQL generates parameterized INSERT
+and SELECT statements, and SQLite stores the posts in the server's shared
+in-memory database. GET renders the latest posts with lean-html's automatic
+text escaping. The page uses POST-Redirect-GET; posts are visible to all
+visitors of this server and are cleared when the server restarts. This sample
+accepts names up to 24 characters and messages up to 500 characters, and does
+not include authentication or CSRF protection.
 
 ## HTML templating
 
@@ -219,7 +232,7 @@ checks during a slow page request, all without restarting its server.
 ## SQLite backend
 
 At startup, the server opens one SQLite `:memory:` connection, creates the
-`users` table, and inserts ten synthetic users (IDs 1 through 10).
+`users` and `posts` tables, and inserts ten synthetic users (IDs 1 through 10).
 All requests share that connection: data lasts until the process exits and is
 recreated on restart. No database file is written. Connection setup or seeding
 failures stop startup rather than running without a working database.
@@ -309,7 +322,7 @@ bash tests/http-smoke.sh
 
 The HTTP smoke test requires Bash, curl, and jq, and starts and stops its own
 server on port 18080 (`bash tests/http-smoke.sh 18081` selects another port).
-It verifies database-backed HTML, executed results and SQL/parameter separation,
+It verifies database-backed HTML, bulletin board POST/GET persistence and escaping, executed results and SQL/parameter separation,
 404/405 behavior, 32 concurrent queries with unique IDs, and port validation.
 `lake test` also tests text binding, integer limits, statement errors and recovery,
 HTML escaping, and isolation between in-memory connections.

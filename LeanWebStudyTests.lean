@@ -55,11 +55,13 @@ def expectFailure (action : IO α) (message : String) : IO Unit := do
 
 def main : IO Unit := do
   let context : Page.Context := {
-    requestId := 7, path := "/hello", usersHtml := "<ul></ul>", sqliteDemoHtml := "<pre>demo</pre>" }
+    requestId := 7, path := "/hello", usersHtml := "<ul></ul>", sqliteDemoHtml := "<pre>demo</pre>",
+    boardPosts := #[{ id := 3, author := "Ada", message := "Hello" }] }
   match (Lean.fromJson? (Lean.toJson context) : Except String Page.Context) with
   | .ok decoded =>
     unless decoded.requestId == context.requestId && decoded.path == context.path &&
-        decoded.usersHtml == context.usersHtml && decoded.sqliteDemoHtml == context.sqliteDemoHtml do
+        decoded.usersHtml == context.usersHtml && decoded.sqliteDemoHtml == context.sqliteDemoHtml &&
+        decoded.boardPosts == context.boardPosts do
       throw (IO.userError "Page context must preserve every field through JSON")
   | .error error => throw (IO.userError s!"Page context decoding failed: {error}")
   let legacyContext := Lean.Json.mkObj [
@@ -67,8 +69,8 @@ def main : IO Unit := do
     ("usersHtml", Lean.toJson ("<ul></ul>" : String))]
   match (Lean.fromJson? legacyContext : Except String Page.Context) with
   | .ok decoded =>
-    unless decoded.sqliteDemoHtml.isEmpty do
-      throw (IO.userError "Legacy page context must default the demo HTML to empty")
+    unless decoded.sqliteDemoHtml.isEmpty && decoded.boardPosts.isEmpty do
+      throw (IO.userError "Legacy page context must default optional fields")
   | .error error => throw (IO.userError s!"Legacy page context decoding failed: {error}")
   let invalidContext := Lean.Json.mkObj [
     ("requestId", Lean.toJson (1 : Nat)), ("path", Lean.toJson ("/" : String)),
@@ -90,6 +92,15 @@ def main : IO Unit := do
       sql := "SELECT sql FROM sqlite_master WHERE name = ?"
       params := #[.text "users"] }) == #[#[.text SampleData.sqliteSchema]] do
     throw (IO.userError "Displayed schema must match the actual database schema")
+  let boardSelect <- renderQuery (.select #[.all] "posts" none)
+  unless (← db.execute boardSelect).isEmpty do
+    throw (IO.userError "A newly seeded bulletin board must have no posts")
+  let boardInsert <- renderQuery (.insert "posts" #["author", "message"]
+    #[#[.text "Ada", .text "Hello from SQLite"]])
+  let _ ← db.execute boardInsert
+  unless (← db.execute boardSelect) ==
+      #[#[.integer 1, .text "Ada", .text "Hello from SQLite"]] do
+    throw (IO.userError "MapleSQL post insertion and retrieval must use the shared SQLite database")
   for row in SampleData.users do
     match row.toList with
     | [.integer id, .text _, .text email] =>

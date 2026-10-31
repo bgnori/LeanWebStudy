@@ -35,6 +35,9 @@ def Database.seededMemory : IO Database := do
   discard <| db.execute {
     sql := SampleData.sqliteSchema
     params := #[] }
+  discard <| db.execute {
+    sql := "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, message TEXT NOT NULL)"
+    params := #[] }
   let insert <- renderQuery SampleData.insertStatement
   discard <| db.execute insert
   return db

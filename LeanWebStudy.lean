@@ -6,6 +6,7 @@ import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch
 import Lithe.Core.Context
+import Lithe.Extractor.Form
 import Std.Http.Server
 import Std.Sync.Mutex
 
@@ -126,18 +127,68 @@ def WebHandler.pageContext (self : WebHandler) (path : String) : IO Page.Context
     emailQuery (← self.execute emailQuery)
   return { requestId, path, usersHtml := users, sqliteDemoHtml := demo }
 
+def WebHandler.boardPosts (self : WebHandler) : IO (Array Page.BoardPost) := do
+  let query <- renderQuery (.select #[.all] "posts" none)
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.integer id, .text author, .text message] =>
+      pure { id, author, message }
+    | _ => throw (IO.userError "Unexpected bulletin board query result")
+
+def WebHandler.insertBoardPost (self : WebHandler) (author message : String) :
+    IO (Except String Unit) := do
+  try
+    let insert ← renderQuery (.insert "posts" #["author", "message"]
+      #[#[.text author, .text message]])
+    let _ ← self.execute insert
+    pure (.ok ())
+  catch error =>
+    pure (.error error.toString)
+
 def WebHandler.servePage (self : WebHandler) (path : String) : IO Lithe.Response := do
   try
     let some source <- self.pages.find path |
       return ((Lithe.Response.text "Not found\n").withStatus 404)
         |>.setHeader "Cache-Control" "no-store"
     let context <- self.pageContext path
+    let context ←
+      if path == "/board" || path == "/board/" then
+        pure { context with boardPosts := (← self.boardPosts).reverse }
+      else
+        pure context
     let html <- DevPages.render source context
     return (Lithe.Response.html html).setHeader "Cache-Control" "no-store"
   catch error =>
     IO.eprintln s!"Page request failed ({path}): {error}"
     return ((Lithe.Response.text "Page request failed\n").withStatus 500)
       |>.setHeader "Cache-Control" "no-store"
+
+def WebHandler.boardGetRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  pure (← self.servePage context.req.path)
+
+def WebHandler.boardPostRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let params ← Lithe.Form.params (limit := some 8192) context
+  let field (name : String) : Option String := do
+    let values ← params.get? name
+    if values.size == 1 then values[0]? else none
+  let some author := field "author" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'author'")
+  let some message := field "message" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'message'")
+  let author := author.trimAscii.toString
+  let message := message.trimAscii.toString
+  if author.isEmpty || message.isEmpty then
+    throw (Lithe.HttpError.badRequest "author and message must not be empty")
+  if author.length > 24 then
+    throw (Lithe.HttpError.badRequest "author must be at most 24 characters")
+  if message.length > 500 then
+    throw (Lithe.HttpError.badRequest "message must be at most 500 characters")
+  match ← self.insertBoardPost author message with
+  | .ok _ => pure (Lithe.Response.empty 303 |>.setHeader "Location" "/board/")
+  | .error error =>
+    IO.eprintln s!"Bulletin board POST failed: {error}"
+    pure (Lithe.Response.text "Post could not be saved\n" |>.withStatus 500)
 
 def WebHandler.fallback (self : WebHandler) : Lithe.Handler := fun context => do
   if context.req.method != .GET then
@@ -180,6 +231,8 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
   Lithe.Router.empty
     |>.get "/health" (self.healthRoute)
     |>.get "/api/query" (self.queryRoute)
+    |>.get "/board/" (self.boardGetRoute)
+    |>.post "/board/" (self.boardPostRoute)
     |>.withFallback (self.fallback)
 
 def WebHandler.create
@@ -188,13 +241,27 @@ def WebHandler.create
   let handler : WebHandler := { counter, database, pages, router := .empty }
   { handler with router := handler.registerRoutes }
 
-def WebHandler.toLitheRequest (request : Request Body.Stream) : Lithe.Request :=
-  { method := (Lithe.Method.ofString? (toString request.line.method)).getD .POST
+def WebHandler.toLitheRequest (request : Request Body.Stream) : IO Lithe.Request := do
+  let bodyStream : Lithe.BodyStream := {
+    next := ExceptT.mk do
+      try
+        let chunk? ← Std.Async.Async.block request.body.recv
+        pure (.ok (chunk?.map fun chunk => chunk.data))
+      catch error =>
+        IO.eprintln s!"HTTP request body read failed: {error}"
+        pure (.error {
+          status := 500
+          code := "request_body_read_failed"
+          message := "Request body could not be read" })
+  }
+  return {
+    method := (Lithe.Method.ofString? (toString request.line.method)).getD .POST
     path := toString request.line.uri.path
     query := request.line.uri.query.toRawString
     headers := request.line.headers.toArray.map fun (name, value) =>
       (toString name, toString value)
-    body := ByteArray.empty }
+    body := ByteArray.empty
+    bodyStream := some bodyStream }
 
 def WebHandler.toHttpResponse (response : Lithe.Response) :
     Std.Async.Async (Response Body.Full) := do
@@ -213,8 +280,9 @@ instance : Server.Handler WebHandler where
   ResponseBody := Body.Full
   onRequest self request := do
     let response <- Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated) do
+      let litheRequest ← WebHandler.toLitheRequest request
       Lithe.dispatch self.router (Lithe.RequestCtx.ofRequest
-        (WebHandler.toLitheRequest request)))
+        litheRequest))
     WebHandler.toHttpResponse response
   onFailure _ error := IO.eprintln s!"HTTP transport failure: {error}"
 
