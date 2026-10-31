@@ -13,12 +13,56 @@ SQLite は変更しない。固定された Lean 4.35.0 の
 `Std.Http.Server.Handler` には生のソケットを引き渡す Upgrade API がなく、
 通常の HTTP レスポンスに 101 を設定するだけでは WebSocket に移行できない。
 
+## HTTP Upgrade と接続の引き渡し
+
+Lean の `Std.Http.Server` と `ws-lean` を組み合わせること自体が不可能という
+意味ではない。難所は WebSocket フレーム処理よりも、既存 HTTP 接続を HTTP
+サーバーから WebSocket ランタイムへ渡す境界にある。
+
+`Std.Http.Server.Handler` はリクエストを受けて HTTP Response を返す抽象であり、
+接続ソケットを Handler に公開しない。101 を通常の Response として返しても、
+サーバー側の接続処理はその接続を引き続き所有するため、以後の読み書きを
+WebSocket に切り替える契約にはならない。統合するなら、Upgrade を通常応答と
+区別して表現し、101 の送信後に接続の読み書き権限を一方的に移す仕組みが要る。
+
+この引き渡しでは、少なくとも次の状態を一貫させなければならない。
+
+- HTTP パーサーがソケットから先読みしたバイトがあれば、Upgrade 後の最初の
+  WebSocket フレームを失わないよう、その残りをストリームとともに渡す。
+- 101 の送信前後で HTTP と WebSocket の両方が同じソケットを読んだり書いたり
+  しないよう、所有権と切り替え時点を明確にする。
+- 接続ごとの非同期タスク、キャンセル、切断、サーバー停止、エラー時の後始末を
+  HTTP サーバーの接続管理と WebSocket 側で二重管理しない。
+- Lithe を経由する場合は、Lithe の WebSocket Handler が要求する Rust Shim 側の
+  Upgrade と、Std HTTP サーバー側の接続引き渡しの両方を接続する。
+
+つまり、単に `ws-lean` の API を呼び出すだけでは済まず、Handler の結果型、
+HTTP 接続ループ、ストリーム／バッファ、非同期タスクのライフサイクルにまたがる
+設計変更になり得る。これは「仕様が汚い」と断定するより、短い HTTP request /
+response を前提にした抽象と、長時間存続する双方向セッションとの境界が噛み合わず、
+接続状態と処理状態の整合性を保つ責任が呼び出し側に漏れやすい、と捉えるのが
+正確である。
+
+## 今日の判断
+
+2026-10-31 時点では、現状の libwebsockets を使う方針は妥当と判断する。
+Std HTTP サーバーへの Upgrade 機能追加や独自接続ループの保守を避けつつ、
+HTTP は既存の Std / Lithe 構成のまま、WebSocket のプロトコル処理は専用ライブラリーに
+任せられるためである。別リスナーとシステム開発ライブラリーへの依存は代償だが、
+このローカル学習用アプリでは、接続所有権の移譲を新たに実装・保守するより小さい。
+
+同一ポート化や Lean のみでの実装が要件になった場合は、Std 側の Upgrade API、
+接続ループの独自実装、または別の HTTP サーバーへの移行を改めて比較する。
+`ws-lean` は有力なプロトコル層の候補だが、HTTP 接続の引き渡し経路は別途必要であり、
+公開 README ではプレリリースで高レベル API が変更され得るとされている。
+
 ## 候補とトレードオフ
 
 | 候補 | 利点 | 費用・制約 | 判断 |
 | --- | --- | --- | --- |
 | Std.Async.TCP 上で RFC 6455 を自作 | Lean のみで同じポートに統合できる | SHA-1/Base64、マスク、断片化、UTF-8、Ping/Pong、Close、バックプレッシャーを維持・検証する必要がある | サンプルのための独自プロトコル実装を避ける |
 | [websocket.lean](https://github.com/cleissonbarbosa/websocket.lean) | Lean のプロトコル・サーバー API がある | 公開 README は beta。調査時の `lean-toolchain` は 4.21.0、Alloy を master から取得。4.35.0 との互換性・固定化の検証が別途必要 | 今回は不採用。互換性がないと断定したわけではない |
+| [ws-lean](https://github.com/pb64-lean/ws-lean) | Lean 製の RFC 6455 プロトコル層。HTTP/1.1 Upgrade、TCP/TLS、非同期接続ランタイム等を提供 | プレリリースで高レベル API は変更され得る。既存 Std HTTP 接続をUpgrade後に渡す経路は別途必要 | 将来の候補。現行構成では接続引き渡しの設計・保守が増える |
 | [Python websockets](https://websockets.readthedocs.io/en/stable/intro/index.html) | フレーム処理が成熟し、asyncio / Sans-I/O を提供 | Python サービスと追加パッケージの起動・終了・依存管理が必要。アプリ本体が複数ランタイムになる | 既存 Python は開発ツールのみなので不採用 |
 | [libwebsockets](https://libwebsockets.org/) | 継続的に開発される C ライブラリー。非同期イベントループ、断片化、制御フレームなどを担当。既存 SQLite C FFI と同じビルド方式に乗る | システム開発ライブラリーが増える。C のキュー・ライフサイクル管理、別リスナーが必要 | **採用** |
 
