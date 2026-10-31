@@ -11,9 +11,10 @@ def main (args : List String) : IO Unit := do
       | none => throw (IO.userError "Port must be an integer")
     | _ => throw (IO.userError "Usage: leanwebstudy [port]")
   let counter <- Std.Mutex.new 0
+  let database <- Std.Mutex.new (← LeanWebStudy.Database.seededMemory)
   Std.Async.Async.block do
     let server <- Std.Http.Server.serve
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
-      (LeanWebStudy.WebHandler.mk counter)
+      (LeanWebStudy.WebHandler.mk counter database)
     IO.println s!"Listening on http://127.0.0.1:{port}"
     server.waitShutdown

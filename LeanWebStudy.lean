@@ -1,4 +1,5 @@
 import MapleSQL
+import LeanWebStudy.Database
 import Lean.Data.Json
 import Std.Http.Server
 import Std.Sync.Mutex
@@ -24,6 +25,27 @@ def queryJson (requestId : Nat) : Except String Lean.Json := do
 
 structure WebHandler where
   counter : Std.Mutex Nat
+  database : Std.Mutex Database
+
+def rowsJson (rows : Array (Array MapleSQL.Value)) : Lean.Json :=
+  .arr (rows.map fun row => .arr (row.map valueJson))
+
+def escapeHtml (text : String) : String :=
+  text.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
+    |>.replace "\"" "&quot;" |>.replace "'" "&#39;"
+
+def usersHtml (rows : Array (Array MapleSQL.Value)) : IO String := do
+  let items <- rows.mapM fun row =>
+    match row.toList with
+    | [.integer id, .text name] => pure s!"<li>{id}: {escapeHtml name}</li>"
+    | _ => throw (IO.userError "Unexpected users query result")
+  return "<ul>" ++ String.join items.toList ++ "</ul>"
+
+def WebHandler.execute (self : WebHandler) (query : MapleSQL.Formatted) :
+    IO (Array (Array MapleSQL.Value)) :=
+  self.database.atomically do
+    let db <- get
+    db.execute query
 
 def WebHandler.nextRequestId (self : WebHandler) : IO Nat :=
   self.counter.atomically do
@@ -39,19 +61,36 @@ instance : Server.Handler WebHandler where
     match toString request.line.uri.path with
     | "/" =>
       let requestId <- self.nextRequestId
-      return <- (Response.ok.header! "Cache-Control" "no-store").html
-        ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" ++
-          "<title>LeanWebStudy</title></head><body><h1>LeanWebStudy</h1>" ++
-          s!"<p>Dynamic page request: {requestId}</p>" ++
-          "<p><a href=\"/api/query\">Generate a parameterized SQL query</a></p>" ++
-          "</body></html>")
+      try
+        let query <- renderQuery (.select #[.all] "users" none)
+        let users <- usersHtml (← self.execute query)
+        return <- (Response.ok.header! "Cache-Control" "no-store").html
+          ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" ++
+            "<title>LeanWebStudy</title></head><body><h1>LeanWebStudy</h1>" ++
+            s!"<p>Dynamic page request: {requestId}</p>" ++
+            "<h2>Users from SQLite (:memory:)</h2>" ++ users ++
+            "<p><a href=\"/api/query\">Execute a parameterized SQL query</a></p>" ++
+            "</body></html>")
+      catch error =>
+        IO.eprintln s!"Database request failed: {error}"
+        return <- Response.internalServerError.text "Database request failed\n"
     | "/health" =>
       return <- Response.ok.json "{\"status\":\"ok\"}"
     | "/api/query" =>
       let requestId <- self.nextRequestId
-      match queryJson requestId with
-      | .ok json =>
-        return <- (Response.ok.header! "Cache-Control" "no-store").json json.compress
+      match sampleQuery requestId with
+      | .ok query =>
+        try
+          let rows <- self.execute query
+          let response := Lean.Json.mkObj [
+            ("requestId", Lean.toJson requestId),
+            ("sql", Lean.toJson query.sql),
+            ("params", .arr (query.params.map valueJson)),
+            ("rows", rowsJson rows)]
+          return <- (Response.ok.header! "Cache-Control" "no-store").json response.compress
+        catch error =>
+          IO.eprintln s!"Database request failed: {error}"
+          return <- Response.internalServerError.text "Database request failed\n"
       | .error error =>
         IO.eprintln s!"SQL generation failed: {error}"
         return <- Response.internalServerError.text "SQL generation failed\n"
