@@ -36,10 +36,8 @@ Stop it with Ctrl+C.
 | Route | Result |
 | --- | --- |
 | `GET /` | Index of the feature pages |
-| `GET /sqlite/` | SQLite examples index |
+| `GET /sqlite/` | MapleSQL-generated queries executed against SQLite, with user data |
 | `GET /sqlite/users` | SQLite users example |
-| `GET /maplesql/` | MapleSQL examples index |
-| `GET /maplesql/parameterized-query` | Parameterized query example |
 | `GET /templates/` | HTML template examples index |
 | `GET /templates/lean-html` | lean-html template example |
 | `GET /health` | JSON health check |
@@ -59,8 +57,7 @@ Dynamic responses disable caching.
 Pages are loaded from the `Pages/` directory by default. Each feature has an
 `index.lean` at its route, with individual examples beneath it:
 
-- `/sqlite/` and `/sqlite/users`
-- `/maplesql/` and `/maplesql/parameterized-query`
+- `/sqlite/` and `/sqlite/users` (MapleSQL and SQLite)
 - `/templates/` and `/templates/lean-html`
 
 For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs
