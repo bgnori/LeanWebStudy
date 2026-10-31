@@ -22,6 +22,9 @@ require maplesql from git
 require html from git
   "https://github.com/paulbutcher/lean-html" @ "573ae2609ceef7afd509d0fcce533ddc913e990f"
 
+require lithe from git
+  "https://github.com/JoshuaPurtell/lithe" @ "v0.1.0"
+
 lean_lib LeanWebStudy
 
 target sqlite.o pkg : System.FilePath := do

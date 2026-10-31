@@ -19,10 +19,11 @@ def main (args : List String) : IO Unit := do
   let pages <- LeanWebStudy.DevPages.open (directory.getD "Pages")
   let counter <- Std.Mutex.new 0
   let database <- Std.Mutex.new (← LeanWebStudy.Database.seededMemory)
+  let handler := LeanWebStudy.WebHandler.create counter database pages
   Std.Async.Async.block do
     let server <- Std.Http.Server.serve
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
-      (LeanWebStudy.WebHandler.mk counter database pages)
+      handler
     IO.println s!"Listening on http://127.0.0.1:{port}"
     IO.println s!"Pages: {pages.directory} (reloaded per request)"
     server.waitShutdown

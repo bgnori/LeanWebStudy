@@ -11,9 +11,10 @@ and serves dynamically generated web content backed by SQLite.
 - Linux with a C compiler and the SQLite development library. On Debian/Ubuntu:
   `sudo apt-get install build-essential libsqlite3-dev`.
 
-This version supplies `Std.Async` and `Std.Http.Server`; no third-party HTTP
-package or Mathlib is needed. MapleSQL is pinned to a Git commit and built with
-the application's toolchain. Its own repository remains unchanged.
+HTTP serving uses `Std.Async` and `Std.Http.Server`; [Lithe](https://github.com/JoshuaPurtell/lithe)
+provides route registration and dispatch. The optional Lithe Rust server shim is
+not used. Mathlib is not needed. MapleSQL is pinned to a Git commit and built
+with the application's toolchain. Its own repository remains unchanged.
 
 ## Build, test, and run
 
@@ -44,7 +45,9 @@ Stop it with Ctrl+C.
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
 
-Unknown paths return 404. Non-GET requests return 405 with `Allow: GET`.
+The `/health` and `/api/query` routes and the dynamic page fallback are
+registered with Lithe. Unknown paths return 404. Non-GET requests return 405
+with `Allow: GET`.
 HTTP transport, SQL-generation, and database failures are logged to stderr.
 Failed database requests return HTTP 500 without exposing SQLite error details.
 The shared request counter and database connection are protected by mutexes,
