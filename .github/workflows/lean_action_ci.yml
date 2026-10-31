@@ -11,10 +11,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - name: Install SQLite development library
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Install SQLite and development-test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev python3
       - uses: leanprover/lean-action@v1
       - name: HTTP smoke test
         run: bash tests/http-smoke.sh
       - name: Development page smoke test
         run: bash tests/dev-pages-smoke.sh
+      - name: Development watcher tests
+        run: python3 -m unittest discover -s tests -p 'test_dev*.py'

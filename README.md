@@ -55,6 +55,60 @@ The HTTP adapter preserves Lithe's Content-Type without adding another:
 HTML pages use `text/html; charset=utf-8`, JSON endpoints use
 `application/json; charset=utf-8`, and text errors use `text/plain; charset=utf-8`.
 
+## Save-to-preview development loop
+
+Start the development watcher once from the project root:
+
+```sh
+python3 tools/dev.py
+# Optional: python3 tools/dev.py --port 18080 --pages /absolute/path/to/pages
+```
+
+This requires Python 3.10 or newer (standard library only; on Debian/Ubuntu,
+`sudo apt-get install python3`), Lake, and the normal build prerequisites.
+Open <http://127.0.0.1:8080> and keep editing: saved Lean/native source changes
+automatically trigger `lake build`, checks of all page sources, server restart,
+and browser reload after a successful health check. No manual terminal commands
+or browser refresh are needed. The URL and scroll position are retained on reload;
+form contents and other browser-local state are not preserved.
+
+The preview URL stays available while the backend restarts. An on-page status
+shows when the displayed view is outdated, a build/startup fails, or the watcher
+disconnects. Build/page-check diagnostics are also printed in the terminal.
+Failed updates do not advance the preview revision; save a corrected source to
+retry. A new tab opened during an update receives a waiting page that
+automatically recovers. Browser JavaScript must be enabled.
+
+This first stage deliberately rebuilds/restarts for **every** watched change,
+including page-only edits. Rapid saves are debounced, and changes during a build
+or startup cause another build rather than publishing that outdated result.
+Each successful cycle prints `Updated in ...s` to guide later optimization.
+All backend restarts recreate the in-memory SQLite database and reset the counter.
+The old page stays visible in an already-open browser, but the old backend is
+stopped before building to avoid mixing old server code with new shared modules.
+
+Watched inputs are `.lean`, `.c`, `.h`, `lake-manifest.json`, and `lean-toolchain`
+under the project and selected page directory. `.lake`, `.git`, and Python caches
+are excluded. Saved dependency configuration changes trigger a build, not
+`lake update`; dependency resolution remains an explicit operation. Changes
+inside dependency checkouts are not watched. Page checks type-check, but do not
+execute `main`; runtime failures still appear when requesting the page and are
+logged by the backend.
+
+The watcher is a loopback-only, GET/HEAD development preview proxy, not a
+production server. It reserves `/__dev/status` and injects a small polling client
+only in preview HTML. Normal `lake exe leanwebstudy` behavior is unchanged.
+Do not run multiple watchers/builds against the same checkout concurrently.
+Stop with Ctrl+C; the owned backend and build processes are stopped too.
+
+```sh
+python3 -m unittest discover -s tests -p 'test_dev*.py'
+```
+
+The integration test uses a temporary project with separate application build
+outputs and verifies real page/fixture updates, error recovery, rapid saves,
+page addition/deletion, and watcher shutdown.
+
 ## Page routing and live reload
 
 Pages are loaded from the `Pages/` directory by default. Each feature has an
@@ -98,8 +152,8 @@ helpers imported by a page requires `lake build` for those modules. This is
 source reloading in isolated processes, **not** native hot replacement within
 the server's Lean runtime.
 
-For SQLite rendering, server-side helpers, or fixture changes, rebuild and
-restart the server; rebuilding does not update an already running process or
+Without the watcher, SQLite rendering, server-side helpers, or fixture changes
+require rebuilding and restarting the server; rebuilding does not update an already running process or
 reseed its in-memory database. See the [module reload investigation (Japanese)](docs/module-reload.md)
 for the update boundaries, verified behavior, and troubleshooting steps.
 
