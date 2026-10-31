@@ -98,6 +98,11 @@ helpers imported by a page requires `lake build` for those modules. This is
 source reloading in isolated processes, **not** native hot replacement within
 the server's Lean runtime.
 
+For SQLite rendering, server-side helpers, or fixture changes, rebuild and
+restart the server; rebuilding does not update an already running process or
+reseed its in-memory database. See the [module reload investigation (Japanese)](docs/module-reload.md)
+for the update boundaries, verified behavior, and troubleshooting steps.
+
 The server sends a JSON context on stdin containing `requestId`, the URL `path`,
 HTML-escaped `usersHtml`, and `sqliteDemoHtml` (source attribution, source/SQLite
 schemas, MapleSQL statements, generated SQL, separate parameters, and actual
