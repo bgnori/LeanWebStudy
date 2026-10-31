@@ -3,6 +3,7 @@ import Html
 import LeanWebStudy.Database
 import LeanWebStudy.DevPages
 import LeanWebStudy.Chat
+import LeanWebStudy.Pong
 import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch

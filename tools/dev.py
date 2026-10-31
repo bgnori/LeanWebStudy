@@ -292,7 +292,7 @@ def handler_for(development):
                     if position >= 0 else body + injection)
             self.send_body(status, "text/html; charset=utf-8", body, headers)
 
-        def websocket(self):
+        def websocket(self, path):
             self.close_connection = True
             preview_port = self.server.server_port
             allowed_hosts = {f"127.0.0.1:{preview_port}", f"localhost:{preview_port}"}
@@ -320,7 +320,7 @@ def handler_for(development):
                     raise ValueError("Invalid WebSocket endpoint port")
                 with socket.create_connection(("127.0.0.1", port), timeout=10) as upstream:
                     headers = [
-                        "GET /chat/socket HTTP/1.1",
+                        f"GET {path} HTTP/1.1",
                         f"Host: 127.0.0.1:{port}",
                         f"Origin: http://127.0.0.1:{development.backend_port}",
                         "Upgrade: websocket", "Connection: Upgrade",
@@ -380,8 +380,8 @@ def handler_for(development):
                     b"<p>Waiting for a successful update.</p></body></html>", state,
                 )
                 return
-            if path == "/chat/socket":
-                self.websocket()
+            if path in {"/chat/socket", "/pong/socket"}:
+                self.websocket(path)
                 return
             connection = http.client.HTTPConnection(
                 "127.0.0.1", development.backend_port, timeout=60

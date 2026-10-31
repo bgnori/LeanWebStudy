@@ -24,18 +24,44 @@ struct peer {
     struct packet *queue[QUEUE];
     size_t head, count;
     int overflow;
+    int is_pong;
+    int player;
 };
 
 struct chat {
     struct lws_context *context;
-    lean_object *handler;
+    lean_object *chat_handler;
+    lean_object *pong_handler;
     struct peer *peers;
     size_t clients;
     uint64_t id;
     uint16_t http_port;
     struct packet *history[HISTORY];
     size_t history_head, history_count;
+    int shutting_down;
 };
+
+static void enqueue(struct peer *peer, const void *data, size_t size);
+
+static size_t pong_players(struct chat *chat) {
+    size_t count = 0;
+    for (struct peer *peer = chat->peers; peer; peer = peer->next)
+        if (peer->is_pong && peer->player) count++;
+    return count;
+}
+
+static void pong_broadcast(struct chat *chat, const char *data, size_t size) {
+    for (struct peer *peer = chat->peers; peer; peer = peer->next)
+        if (peer->is_pong) enqueue(peer, data, size);
+}
+
+static void pong_presence(struct chat *chat) {
+    char event[64];
+    int size = snprintf(event, sizeof(event),
+                        "{\"type\":\"players\",\"count\":%zu}", pong_players(chat));
+    if (size > 0 && (size_t)size < sizeof(event))
+        pong_broadcast(chat, event, (size_t)size);
+}
 
 static lean_obj_res fail(const char *message) {
     return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(message)));
@@ -93,12 +119,16 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         char path[128], protocol[128];
         if (lws_hdr_copy(wsi, path, sizeof(path), WSI_TOKEN_GET_URI) <= 0 ||
             lws_hdr_copy(wsi, protocol, sizeof(protocol), WSI_TOKEN_PROTOCOL) <= 0 ||
-            strcmp(protocol, "leanwebstudy-chat") ||
-            strcmp(path, "/chat/socket") || !valid_origin(wsi, chat) ||
+            !((!strcmp(protocol, "leanwebstudy-chat") &&
+               !strcmp(path, "/chat/socket")) ||
+              (!strcmp(protocol, "leanwebstudy-pong") &&
+               !strcmp(path, "/pong/socket"))) ||
+            !valid_origin(wsi, chat) ||
             chat->clients >= MAX_CLIENTS) {
-            fprintf(stderr, "Chat: rejected path, subprotocol, origin, or connection limit\n");
+            fprintf(stderr, "WebSocket: rejected path, subprotocol, origin, or connection limit\n");
             return 1;
         }
+        peer->is_pong = !strcmp(protocol, "leanwebstudy-pong");
         break;
     }
     case LWS_CALLBACK_ESTABLISHED: {
@@ -106,21 +136,37 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         peer->next = chat->peers;
         chat->peers = peer;
         chat->clients++;
-        size_t size = 32;
-        for (size_t i = 0; i < chat->history_count; ++i)
-            size += chat->history[(chat->history_head + i) % HISTORY]->size + 1;
-        char *history = malloc(size);
-        if (!history) return close_with(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "history allocation");
-        size_t used = (size_t)sprintf(history, "{\"type\":\"history\",\"messages\":[");
-        for (size_t i = 0; i < chat->history_count; ++i) {
-            struct packet *packet = chat->history[(chat->history_head + i) % HISTORY];
-            if (i) history[used++] = ',';
-            memcpy(history + used, packet->data + LWS_PRE, packet->size);
-            used += packet->size;
+        if (peer->is_pong) {
+            int occupied[3] = {0};
+            for (struct peer *other = peer->next; other; other = other->next)
+                if (other->is_pong && other->player >= 1 && other->player <= 2)
+                    occupied[other->player] = 1;
+            peer->player = !occupied[1] ? 1 : !occupied[2] ? 2 : 0;
+            char welcome[64];
+            int size = snprintf(welcome, sizeof(welcome),
+                                "{\"type\":\"welcome\",\"player\":%d}", peer->player);
+            if (size <= 0 || (size_t)size >= sizeof(welcome))
+                return close_with(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "welcome event");
+            enqueue(peer, welcome, (size_t)size);
+            pong_presence(chat);
+        } else {
+            size_t size = 32;
+            for (size_t i = 0; i < chat->history_count; ++i)
+                size += chat->history[(chat->history_head + i) % HISTORY]->size + 1;
+            char *history = malloc(size);
+            if (!history)
+                return close_with(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "history allocation");
+            size_t used = (size_t)sprintf(history, "{\"type\":\"history\",\"messages\":[");
+            for (size_t i = 0; i < chat->history_count; ++i) {
+                struct packet *packet = chat->history[(chat->history_head + i) % HISTORY];
+                if (i) history[used++] = ',';
+                memcpy(history + used, packet->data + LWS_PRE, packet->size);
+                used += packet->size;
+            }
+            memcpy(history + used, "]}", 2);
+            enqueue(peer, history, used + 2);
+            free(history);
         }
-        memcpy(history + used, "]}", 2);
-        enqueue(peer, history, used + 2);
-        free(history);
         break;
     }
     case LWS_CALLBACK_RECEIVE: {
@@ -133,30 +179,52 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         if (!lws_is_final_fragment(wsi) || lws_remaining_packet_payload(wsi)) break;
         lean_object *bytes = lean_alloc_sarray(1, peer->used, peer->used);
         memcpy(lean_sarray_cptr(bytes), peer->input, peer->used);
-        lean_inc(chat->handler);
-        lean_object *result = lean_apply_2(chat->handler, lean_box_uint64(chat->id + 1), bytes);
+        lean_object *handler = peer->is_pong ? chat->pong_handler : chat->chat_handler;
+        lean_inc(handler);
+        lean_object *result = lean_apply_2(handler, lean_box_uint64(chat->id + 1), bytes);
         int accepted = lean_unbox(lean_ctor_get(result, 0));
         lean_object *text = lean_ctor_get(result, 1);
         const char *data = lean_string_cstr(text);
         size_t size = lean_string_size(text) - 1;
         peer->used = 0;
         if (accepted) {
-            struct packet *packet = packet_new(data, size);
-            if (!packet) {
-                lean_dec(result);
-                return close_with(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "history allocation");
+            if (peer->is_pong) {
+                int is_ball = strstr(data, "\"type\":\"ball\"") != NULL;
+                if (!peer->player || (is_ball && peer->player != 1)) {
+                    static const char denied[] =
+                        "{\"type\":\"error\",\"message\":\"この操作は許可されていません。\"}";
+                    enqueue(peer, denied, sizeof(denied) - 1);
+                } else {
+                    char event[CHAT_MAX_INPUT + 96];
+                    int event_size = snprintf(event, sizeof(event),
+                        "{\"type\":\"update\",\"player\":%d,\"event\":%s}",
+                        peer->player, data);
+                    if (event_size <= 0 || (size_t)event_size >= sizeof(event)) {
+                        lean_dec(result);
+                        return close_with(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION,
+                                          "game event too large");
+                    }
+                    pong_broadcast(chat, event, (size_t)event_size);
+                }
+            } else {
+                struct packet *packet = packet_new(data, size);
+                if (!packet) {
+                    lean_dec(result);
+                    return close_with(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION,
+                                      "history allocation");
+                }
+                chat->id++;
+                if (chat->history_count == HISTORY) {
+                    free(chat->history[chat->history_head]);
+                    chat->history_head = (chat->history_head + 1) % HISTORY;
+                    chat->history_count--;
+                }
+                chat->history[(chat->history_head + chat->history_count++) % HISTORY] = packet;
+                for (struct peer *target = chat->peers; target; target = target->next)
+                    if (!target->is_pong) enqueue(target, data, size);
             }
-            chat->id++;
-            if (chat->history_count == HISTORY) {
-                free(chat->history[chat->history_head]);
-                chat->history_head = (chat->history_head + 1) % HISTORY;
-                chat->history_count--;
-            }
-            chat->history[(chat->history_head + chat->history_count++) % HISTORY] = packet;
-            for (struct peer *target = chat->peers; target; target = target->next)
-                enqueue(target, data, size);
         } else {
-            fprintf(stderr, "Chat: invalid message rejected\n");
+            fprintf(stderr, "WebSocket: invalid message rejected\n");
             enqueue(peer, data, size);
         }
         lean_dec(result);
@@ -183,6 +251,7 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
             *position = peer->next;
             chat->clients--;
         }
+        if (peer->is_pong && !chat->shutting_down) pong_presence(chat);
         for (size_t i = 0; i < peer->count; ++i)
             free(peer->queue[(peer->head + i) % QUEUE]);
         break;
@@ -198,6 +267,8 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
 static const struct lws_protocols protocols[] = {
     {.name = "leanwebstudy-chat", .callback = callback,
      .per_session_data_size = sizeof(struct peer), .rx_buffer_size = 4096},
+    {.name = "leanwebstudy-pong", .callback = callback,
+     .per_session_data_size = sizeof(struct peer), .rx_buffer_size = 4096},
     {0}
 };
 
@@ -208,18 +279,23 @@ static const lws_retry_bo_t idle_policy = {
 
 static void finalize_chat(void *data) {
     struct chat *chat = data;
+    chat->shutting_down = 1;
     lws_context_destroy(chat->context);
     for (size_t i = 0; i < chat->history_count; ++i)
         free(chat->history[(chat->history_head + i) % HISTORY]);
-    lean_dec(chat->handler);
+    lean_dec(chat->chat_handler);
+    lean_dec(chat->pong_handler);
     free(chat);
 }
 
 static void foreach_chat(void *data, b_lean_obj_arg visitor) {
     struct chat *chat = data;
     lean_inc(visitor);
-    lean_inc(chat->handler);
-    lean_dec(lean_apply_1(visitor, chat->handler));
+    lean_inc(chat->chat_handler);
+    lean_dec(lean_apply_1(visitor, chat->chat_handler));
+    lean_inc(visitor);
+    lean_inc(chat->pong_handler);
+    lean_dec(lean_apply_1(visitor, chat->pong_handler));
 }
 
 static lean_external_class *chat_class;
@@ -229,18 +305,22 @@ static void initialize_class(void) {
     chat_class = lean_register_external_class(finalize_chat, foreach_chat);
 }
 
-LEAN_EXPORT lean_obj_res leanwebstudy_chat_open(uint16_t http_port, lean_obj_arg handler) {
+LEAN_EXPORT lean_obj_res leanwebstudy_chat_open(
+    uint16_t http_port, lean_obj_arg chat_handler, lean_obj_arg pong_handler) {
     if (pthread_once(&class_once, initialize_class) != 0) {
-        lean_dec(handler);
+        lean_dec(chat_handler);
+        lean_dec(pong_handler);
         return fail("Could not initialize WebSocket server class");
     }
     struct chat *chat = calloc(1, sizeof(*chat));
     if (!chat) {
-        lean_dec(handler);
+        lean_dec(chat_handler);
+        lean_dec(pong_handler);
         return fail("Could not allocate WebSocket server");
     }
     chat->http_port = http_port;
-    chat->handler = handler;
+    chat->chat_handler = chat_handler;
+    chat->pong_handler = pong_handler;
     struct lws_context_creation_info info = {0};
     info.port = 0;
     info.iface = "127.0.0.1";
@@ -256,7 +336,8 @@ LEAN_EXPORT lean_obj_res leanwebstudy_chat_open(uint16_t http_port, lean_obj_arg
     info.retry_and_idle_policy = &idle_policy;
     chat->context = lws_create_context(&info);
     if (!chat->context) {
-        lean_dec(handler);
+        lean_dec(chat_handler);
+        lean_dec(pong_handler);
         free(chat);
         return fail("Could not start loopback WebSocket server");
     }

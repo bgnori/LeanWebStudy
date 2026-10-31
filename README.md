@@ -46,6 +46,7 @@ Stop it with Ctrl+C.
 | `GET /wiki/new`, `/wiki/edit/{slug}` | Wiki article editor |
 | `POST /wiki/create`, `/wiki/save`, `/wiki/delete` | Create, update, and delete wiki articles |
 | `GET /chat/` | Real-time WebSocket chat page |
+| `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /chat/endpoint` | WebSocket port metadata for the development preview |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
@@ -62,7 +63,9 @@ The chat uses libwebsockets through a native C bridge, with Lean JSON validation
 Messages and recent history travel over WebSocket, not HTTP polling or POST.
 Open `/chat/` in two tabs to try it. A loopback-only ephemeral WebSocket port is
 started in the same process; the development preview tunnels `/chat/socket`
-through its stable port. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
+and `/pong/socket` through its stable port. Pong exchanges paddle positions and
+the player-1-authoritative ball state over WebSocket; open `/pong/` in two tabs
+or devices to play. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
 for setup, limits, reconnection behavior, and local-only restrictions.
 The HTTP adapter preserves Lithe's Content-Type without adding another:
 HTML pages use `text/html; charset=utf-8`, JSON endpoints use
@@ -117,8 +120,8 @@ inotify, or watchdog/watchfiles, are alternatives. Browser status polling is
 separate. See the [design rationale (Japanese)](docs/module-reload.md)
 for trade-offs and the measurement-driven optimization policy.
 
-The watcher is a loopback-only, GET/HEAD development preview proxy with a
-`/chat/socket` WebSocket tunnel, not a
+The watcher is a loopback-only, GET/HEAD development preview proxy with
+`/chat/socket` and `/pong/socket` WebSocket tunnels, not a
 production server. It reserves `/__dev/status` and injects a small polling client
 only in preview HTML. Normal `lake exe leanwebstudy` behavior is unchanged.
 Do not run multiple watchers/builds against the same checkout concurrently.
@@ -142,6 +145,7 @@ Pages are loaded from the `Pages/` directory by default. Each feature has an
 - `/board/` (SQLite-backed bulletin board)
 - `/wiki/` and `/wiki/{slug}` (SQLite-backed wiki)
 - `/chat/` (WebSocket real-time chat)
+- `/pong/` (WebSocket two-player Pong)
 
 For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs
 `Pages/blog/new.lean`. Both `/blog` and `/blog/` open the directory index.

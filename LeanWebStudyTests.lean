@@ -29,6 +29,12 @@ def queryMatches (requestId : Nat) : Bool :=
 #guard !(Chat.response 1 "{}".toUTF8).1
 #guard !(Chat.response 1
   "{\"type\":\"message\",\"requestId\":\"test\",\"author\":\" \",\"message\":\"Hi\"}".toUTF8).1
+#guard (Pong.response 1 "{\"type\":\"paddle\",\"y\":120}".toUTF8).1
+#guard !(Pong.response 1 "{\"type\":\"paddle\",\"y\":371}".toUTF8).1
+#guard (Pong.response 1
+  "{\"type\":\"ball\",\"x\":400,\"y\":225,\"left\":0,\"right\":0}".toUTF8).1
+#guard !(Pong.response 1
+  "{\"type\":\"ball\",\"x\":801,\"y\":225,\"left\":0,\"right\":0}".toUTF8).1
 
 #guard DevPages.relativePath "/" == some (System.FilePath.mk "index.lean")
 #guard DevPages.relativePath "/hello" == some (System.FilePath.mk "hello.lean")

@@ -35,8 +35,10 @@ def Server : Type := ServerImpl.type
 instance : Nonempty Server := ServerImpl.property
 
 @[extern "leanwebstudy_chat_open"]
-opaque openServer (httpPort : UInt16) (handler : UInt64 → ByteArray → Bool × String) :
-  IO Server
+opaque openServer
+    (httpPort : UInt16)
+    (chatHandler : UInt64 → ByteArray → Bool × String)
+    (pongHandler : UInt64 → ByteArray → Bool × String) : IO Server
 
 @[extern "leanwebstudy_chat_port"]
 opaque port (server : @& Server) : IO UInt16

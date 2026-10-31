@@ -12,4 +12,5 @@ def main : IO Unit :=
         "<li><a href=\"/board/\">掲示板 Webアプリ</a></li>" ++
         "<li><a href=\"/wiki/\">Wiki Webアプリ</a></li>" ++
         "<li><a href=\"/chat/\">WebSocket リアルタイムチャット</a></li>" ++
+        "<li><a href=\"/pong/\">WebSocket 通信対戦 Pong</a></li>" ++
         "</ul></body></html>")

@@ -166,6 +166,43 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(history["type"], "history")
         return client, history["messages"]
 
+    def test_pong_roles_validation_broadcast_and_disconnect_presence(self):
+        first = WebSocket(self.port, self.origin, "/pong/socket", "leanwebstudy-pong")
+        self.addCleanup(first.close)
+        self.assertEqual(first.event(), {"type": "welcome", "player": 1})
+        self.assertEqual(first.event(), {"type": "players", "count": 1})
+
+        second = WebSocket(self.port, self.origin, "/pong/socket", "leanwebstudy-pong")
+        self.addCleanup(second.close)
+        self.assertEqual(second.event(), {"type": "welcome", "player": 2})
+        self.assertEqual(second.event(), {"type": "players", "count": 2})
+        self.assertEqual(first.event(), {"type": "players", "count": 2})
+
+        paddle = {"type": "paddle", "y": 123}
+        second.send_frame(json.dumps(paddle).encode())
+        event = {"type": "update", "player": 2, "event": paddle}
+        self.assertEqual(first.event(), event)
+        self.assertEqual(second.event(), event)
+
+        ball = {"type": "ball", "x": 400, "y": 225, "left": 1, "right": 0}
+        first.send_frame(json.dumps(ball).encode())
+        event = {"type": "update", "player": 1, "event": ball}
+        self.assertEqual(first.event(), event)
+        self.assertEqual(second.event(), event)
+
+        first.send_frame(b'{"type":"paddle","y":371}')
+        self.assertEqual(first.event()["type"], "error")
+        second.send_frame(json.dumps(ball).encode())
+        self.assertEqual(second.event()["type"], "error")
+        first.close()
+        self.assertEqual(second.event(), {"type": "players", "count": 1})
+
+        third = WebSocket(self.port, self.origin, "/pong/socket", "leanwebstudy-pong")
+        self.addCleanup(third.close)
+        self.assertEqual(third.event(), {"type": "welcome", "player": 1})
+        self.assertEqual(third.event(), {"type": "players", "count": 2})
+        self.assertEqual(second.event(), {"type": "players", "count": 2})
+
     def test_broadcast_history_order_reconnect_and_fifty_message_limit(self):
         first, _ = self.connect()
         second, _ = self.connect()
@@ -246,6 +283,8 @@ class ChatTests(unittest.TestCase):
                 WebSocket(self.port, origin)
         with self.assertRaises((ConnectionError, OSError)):
             WebSocket(self.port, self.origin, path="/other")
+        with self.assertRaises((ConnectionError, OSError)):
+            WebSocket(self.port, self.origin, path="/pong/socket")
         for protocol in (None, "other-protocol"):
             with self.assertRaises((ConnectionError, OSError)):
                 WebSocket(self.port, self.origin, protocol=protocol)
@@ -257,6 +296,11 @@ class ChatTests(unittest.TestCase):
         self.assertIn(b"new WebSocket", page)
         self.assertIn(b"text.textContent", page)
         self.assertNotIn(b"fetch(", page)
+        status, page = self.request("/pong/")
+        self.assertEqual(status, 200)
+        self.assertIn("通信対戦 Pong".encode(), page)
+        self.assertIn(b"/pong/socket", page)
+        self.assertIn(b"leanwebstudy-pong", page)
 
     def test_connection_limit(self):
         clients = []
@@ -288,6 +332,10 @@ class ChatTests(unittest.TestCase):
         direct, _ = self.connect()
         client.send(message="through-preview")
         self.assertEqual(client.event(), direct.event())
+        pong = WebSocket(port, origin, "/pong/socket", "leanwebstudy-pong")
+        self.addCleanup(pong.close)
+        self.assertEqual(pong.event(), {"type": "welcome", "player": 1})
+        self.assertEqual(pong.event(), {"type": "players", "count": 1})
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
         try:
             connection.request("GET", "/chat/")
