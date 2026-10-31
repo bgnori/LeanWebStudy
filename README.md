@@ -95,6 +95,14 @@ inside dependency checkouts are not watched. Page checks type-check, but do not
 execute `main`; runtime failures still appear when requesting the page and are
 logged by the backend.
 
+File monitoring uses standard-library polling (250ms waits between scans, with
+a 300ms debounce), chosen to avoid extra dependencies, not because Lake requires
+polling. Lake checks rebuild requirements when invoked but has no built-in
+watch command in the pinned version. External OS notifications such as Linux
+inotify, or watchdog/watchfiles, are alternatives. Browser status polling is
+separate. See the [design rationale (Japanese)](docs/module-reload.md)
+for trade-offs and the measurement-driven optimization policy.
+
 The watcher is a loopback-only, GET/HEAD development preview proxy, not a
 production server. It reserves `/__dev/status` and injects a small polling client
 only in preview HTML. Normal `lake exe leanwebstudy` behavior is unchanged.
