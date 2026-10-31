@@ -44,6 +44,71 @@ The shared request counter and database connection are protected by mutexes,
 while the standard HTTP server handles connections asynchronously.
 Dynamic responses disable caching.
 
+## Development page loading
+
+To add or edit Lean pages without restarting the server:
+
+```sh
+lake build
+lake exe leanwebstudy 8080 --dev
+```
+
+In this opt-in mode, `/` runs [Pages/index.lean](Pages/index.lean).
+`/hello` runs `Pages/hello.lean`, and `/blog/new` runs `Pages/blog/new.lean`.
+The URL path is case-sensitive; segments may contain ASCII letters, digits,
+underscores, and hyphens. Query strings do not affect page selection.
+Missing or deleted pages return 404, including a missing index page.
+`/health` and `/api/query` remain server-owned; non-GET requests still return 405.
+Use `lake exe leanwebstudy 18080 --dev /absolute/path/to/pages` for another directory.
+Without `--dev`, the original compiled routes and behavior are unchanged.
+
+A page is a Lean source module with a `main` entry point:
+
+```lean
+import LeanWebStudy.Page
+
+def main : IO Unit :=
+  LeanWebStudy.Page.run fun context =>
+    pure (s!"<h1>Hello, request {context.requestId}</h1>" ++ context.usersHtml)
+```
+
+Every request starts a fresh `lake env lean --run <page>` worker that type-checks
+and executes the current source. No page registration, server rebuild, or
+server restart is required for editing, adding, or deleting these page files.
+Run the server from this project's root with Lake and the pinned toolchain
+available. Imported dependencies still use built `.olean` files: changing
+helpers imported by a page requires `lake build` for those modules. This is
+source reloading in isolated processes, **not** native hot replacement within
+the server's Lean runtime.
+
+The server sends a JSON context on stdin containing `requestId`, the URL `path`,
+and HTML-escaped `usersHtml` queried from its existing SQLite connection.
+`Page.run` returns the HTML as a JSON string on stdout; use stderr for page
+diagnostics. The counter and database remain in the server and survive page
+changes and worker failures. Workers do not inherit the live database handle;
+other data access must be explicitly added to the server/context interface.
+Use `LeanWebStudy.Page.escapeHtml` for any additional untrusted text.
+Compilation, rendering, and protocol failures produce HTTP 500 and diagnostics
+on server stderr, without exposing compiler output in the HTTP response.
+Development page responses, including errors and missing pages, use `no-store`.
+
+Workers run on dedicated tasks so compilation or a slow renderer does not block
+health checks. This approach prioritizes a simple Lean-compatible development
+cycle over latency: each page request incurs process startup and type-checking.
+There is no worker timeout or concurrency cap, and worker-local state is reset
+on every request. Page code is trusted local code with the server user's
+permissions, not sandboxed; do not enable this mode for untrusted pages or
+production traffic. Paths cannot traverse outside the page directory, including
+through symlinks.
+
+```sh
+bash tests/dev-pages-smoke.sh
+```
+
+This test uses port 18082 by default and verifies edits, additions, deletions,
+nested routes, error recovery, state preservation, path confinement, and health
+checks during a slow page request, all without restarting its server.
+
 ## SQLite backend
 
 At startup, the server opens one SQLite `:memory:` connection, creates the
@@ -83,7 +148,7 @@ It verifies database-backed HTML, executed results and SQL/parameter separation,
 404/405 behavior, 32 concurrent queries with unique IDs, and port validation.
 `lake test` also tests text binding, integer limits, statement errors and recovery,
 HTML escaping, and isolation between in-memory connections.
-CI installs SQLite, then runs the build, Lean tests, and HTTP smoke test.
+CI installs SQLite, then runs the build, Lean tests, and both HTTP smoke tests.
 
 User mutation APIs, durable storage, authentication, and a production reverse
 proxy/TLS setup are intentionally not implemented yet.

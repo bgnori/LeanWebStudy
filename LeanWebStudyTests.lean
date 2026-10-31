@@ -24,6 +24,17 @@ def queryMatches (requestId : Nat) : Bool :=
 
 #guard escapeHtml "<script>&\"'" == "&lt;script&gt;&amp;&quot;&#39;"
 
+#guard DevPages.relativePath "/" == some (System.FilePath.mk "index.lean")
+#guard DevPages.relativePath "/hello" == some (System.FilePath.mk "hello.lean")
+#guard DevPages.relativePath "/blog/new-page_2" ==
+  some (System.FilePath.mk "blog/new-page_2.lean")
+#guard DevPages.relativePath "/../Main" == none
+#guard DevPages.relativePath "/%2e%2e/Main" == none
+#guard DevPages.relativePath "/hello/" == none
+#guard DevPages.relativePath "//hello" == none
+#guard DevPages.relativePath "/hello\\world" == none
+#guard DevPages.relativePath "hello" == none
+
 #guard rowsJson #[#[.integer 4, .text "Dave"]] ==
   Lean.Json.arr #[Lean.Json.arr #[Lean.toJson (4 : Int), Lean.toJson ("Dave" : String)]]
 
@@ -40,6 +51,13 @@ def expectFailure (action : IO α) (message : String) : IO Unit := do
   | none => throw (IO.userError s!"Expected failure: {message}")
 
 def main : IO Unit := do
+  let context : Page.Context := { requestId := 7, path := "/hello", usersHtml := "<ul></ul>" }
+  match (Lean.fromJson? (Lean.toJson context) : Except String Page.Context) with
+  | .ok decoded =>
+    unless decoded.requestId == context.requestId && decoded.path == context.path &&
+        decoded.usersHtml == context.usersHtml do
+      throw (IO.userError "Page context must preserve every field through JSON")
+  | .error error => throw (IO.userError s!"Page context decoding failed: {error}")
   let db <- Database.seededMemory
   let query <- match sampleQuery 3 with
     | .ok query => pure query

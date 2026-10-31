@@ -1,5 +1,6 @@
 import MapleSQL
 import LeanWebStudy.Database
+import LeanWebStudy.DevPages
 import Lean.Data.Json
 import Std.Http.Server
 import Std.Sync.Mutex
@@ -26,13 +27,12 @@ def queryJson (requestId : Nat) : Except String Lean.Json := do
 structure WebHandler where
   counter : Std.Mutex Nat
   database : Std.Mutex Database
+  devPages : Option DevPages := none
 
 def rowsJson (rows : Array (Array MapleSQL.Value)) : Lean.Json :=
   .arr (rows.map fun row => .arr (row.map valueJson))
 
-def escapeHtml (text : String) : String :=
-  text.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
-    |>.replace "\"" "&quot;" |>.replace "'" "&#39;"
+def escapeHtml := Page.escapeHtml
 
 def usersHtml (rows : Array (Array MapleSQL.Value)) : IO String := do
   let items <- rows.mapM fun row =>
@@ -52,6 +52,27 @@ def WebHandler.nextRequestId (self : WebHandler) : IO Nat :=
     modify (fun n => n + 1)
     get
 
+def WebHandler.pageContext (self : WebHandler) (path : String) : IO Page.Context := do
+  let requestId <- self.nextRequestId
+  let query <- renderQuery (.select #[.all] "users" none)
+  let users <- usersHtml (← self.execute query)
+  return { requestId, path, usersHtml := users }
+
+def WebHandler.serveDevPage (self : WebHandler) (path : String) :
+    Std.Async.Async (Response Body.Full) := do
+  let some pages := self.devPages | return <- Response.notFound.text "Not found\n"
+  try
+    let html <- Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated) do
+      let some source <- pages.find path | return none
+      return some (← DevPages.render source (← self.pageContext path)))
+    match html with
+    | some html => return <- (Response.ok.header! "Cache-Control" "no-store").html html
+    | none => return <- (Response.notFound.header! "Cache-Control" "no-store").text "Not found\n"
+  catch error =>
+    IO.eprintln s!"Development page request failed ({path}): {error}"
+    return <- (Response.internalServerError.header! "Cache-Control" "no-store").text
+      "Development page request failed\n"
+
 instance : Server.Handler WebHandler where
   ResponseBody := Body.Full
   onRequest self request := do
@@ -60,20 +81,16 @@ instance : Server.Handler WebHandler where
         |>.header! "Allow" "GET").text "Only GET is supported\n"
     match toString request.line.uri.path with
     | "/" =>
-      let requestId <- self.nextRequestId
-      try
-        let query <- renderQuery (.select #[.all] "users" none)
-        let users <- usersHtml (← self.execute query)
-        return <- (Response.ok.header! "Cache-Control" "no-store").html
-          ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" ++
-            "<title>LeanWebStudy</title></head><body><h1>LeanWebStudy</h1>" ++
-            s!"<p>Dynamic page request: {requestId}</p>" ++
-            "<h2>Users from SQLite (:memory:)</h2>" ++ users ++
-            "<p><a href=\"/api/query\">Execute a parameterized SQL query</a></p>" ++
-            "</body></html>")
-      catch error =>
-        IO.eprintln s!"Database request failed: {error}"
-        return <- Response.internalServerError.text "Database request failed\n"
+      if self.devPages.isNone then
+        try
+          let context <- self.pageContext "/"
+          return <- (Response.ok.header! "Cache-Control" "no-store").html
+            (Page.home context)
+        catch error =>
+          IO.eprintln s!"Database request failed: {error}"
+          return <- Response.internalServerError.text "Database request failed\n"
+      else
+        return <- self.serveDevPage "/"
     | "/health" =>
       return <- Response.ok.json "{\"status\":\"ok\"}"
     | "/api/query" =>
@@ -94,8 +111,7 @@ instance : Server.Handler WebHandler where
       | .error error =>
         IO.eprintln s!"SQL generation failed: {error}"
         return <- Response.internalServerError.text "SQL generation failed\n"
-    | _ =>
-      return <- Response.notFound.text "Not found\n"
+    | path => return <- self.serveDevPage path
   onFailure _ error := IO.eprintln s!"HTTP transport failure: {error}"
 
 end LeanWebStudy

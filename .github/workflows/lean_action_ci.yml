@@ -16,3 +16,5 @@ jobs:
       - uses: leanprover/lean-action@v1
       - name: HTTP smoke test
         run: bash tests/http-smoke.sh
+      - name: Development page smoke test
+        run: bash tests/dev-pages-smoke.sh
