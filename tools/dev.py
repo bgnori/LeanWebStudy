@@ -7,6 +7,7 @@ import html
 import http.client
 import json
 import os
+import select
 from pathlib import Path
 import signal
 import socket
@@ -258,6 +259,8 @@ class Development:
 
 def handler_for(development):
     class Preview(BaseHTTPRequestHandler):
+        rbufsize = 0
+
         def log_message(self, format, *args):
             if self.path.split("?", 1)[0] == "/__dev/status":
                 return
@@ -277,10 +280,89 @@ def handler_for(development):
         def html(self, status, body, state, headers=()):
             script = CLIENT.replace("__REVISION__", str(state["revision"]))
             injection = ('<script>' + script + '</script>').encode()
+            # Chat uses the stable preview URL instead of its ephemeral backend port.
+            marker = b'<meta name="leanwebstudy-chat-port" content="'
+            start = body.find(marker)
+            if start >= 0:
+                end = body.find(b'">', start + len(marker))
+                if end >= 0:
+                    body = body[:start + len(marker)] + body[end:]
             position = body.lower().rfind(b"</body>")
             body = (body[:position] + injection + body[position:]
                     if position >= 0 else body + injection)
             self.send_body(status, "text/html; charset=utf-8", body, headers)
+
+        def websocket(self):
+            self.close_connection = True
+            preview_port = self.server.server_port
+            allowed_hosts = {f"127.0.0.1:{preview_port}", f"localhost:{preview_port}"}
+            if (self.headers.get("Host") not in allowed_hosts or
+                    self.headers.get("Origin") != "http://" + self.headers.get("Host", "")):
+                self.send_body(403, "text/plain; charset=utf-8", b"Invalid WebSocket origin\n")
+                return
+            if self.headers.get("Upgrade", "").lower() != "websocket":
+                self.send_body(426, "text/plain; charset=utf-8", b"WebSocket upgrade required\n")
+                return
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", development.backend_port, timeout=10
+            )
+            upgraded = False
+            try:
+                connection.request("GET", "/chat/endpoint")
+                response = connection.getresponse()
+                if response.status != 200:
+                    raise RuntimeError("WebSocket endpoint discovery failed")
+                endpoint = json.loads(response.read())
+                if not isinstance(endpoint, dict) or "port" not in endpoint:
+                    raise ValueError("Invalid WebSocket endpoint metadata")
+                port = endpoint["port"]
+                if type(port) is not int or not 1 <= port <= 65535:
+                    raise ValueError("Invalid WebSocket endpoint port")
+                with socket.create_connection(("127.0.0.1", port), timeout=10) as upstream:
+                    headers = [
+                        "GET /chat/socket HTTP/1.1",
+                        f"Host: 127.0.0.1:{port}",
+                        f"Origin: http://127.0.0.1:{development.backend_port}",
+                        "Upgrade: websocket", "Connection: Upgrade",
+                    ]
+                    for name in ("Sec-WebSocket-Key", "Sec-WebSocket-Version",
+                                 "Sec-WebSocket-Protocol"):
+                        value = self.headers.get(name)
+                        if value is not None:
+                            if len(self.headers.get_all(name)) != 1 or "\r" in value or "\n" in value:
+                                raise ValueError("Invalid WebSocket upgrade header")
+                            headers.append(f"{name}: {value}")
+                    upstream.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
+                    with upstream.makefile("rb", buffering=0) as reader:
+                        head = bytearray()
+                        while True:
+                            line = reader.readline(4097)
+                            if not line or len(line) > 4096 or len(head) + len(line) > 16384:
+                                raise RuntimeError("Invalid WebSocket upgrade response")
+                            head.extend(line)
+                            if line == b"\r\n":
+                                break
+                        if not head.startswith(b"HTTP/1.1 101 "):
+                            raise RuntimeError("Backend rejected WebSocket upgrade")
+                        self.connection.sendall(head)
+                        upgraded = True
+                        self.connection.settimeout(10)
+                        while not development.shutdown.is_set():
+                            readable, _, _ = select.select(
+                                [self.connection, upstream], [], [], 0.25
+                            )
+                            for source in readable:
+                                data = source.recv(65536)
+                                if not data:
+                                    return
+                                target = upstream if source is self.connection else self.connection
+                                target.sendall(data)
+            except (OSError, http.client.HTTPException, RuntimeError, ValueError, KeyError) as error:
+                print(f"[preview] WebSocket tunnel failed: {error}", file=sys.stderr, flush=True)
+                if not upgraded:
+                    self.send_body(502, "text/plain; charset=utf-8", b"WebSocket tunnel failed\n")
+            finally:
+                connection.close()
 
         def do_GET(self):
             state = development.status()
@@ -297,6 +379,9 @@ def handler_for(development):
                     b"</head><body><h1>Development preview</h1>"
                     b"<p>Waiting for a successful update.</p></body></html>", state,
                 )
+                return
+            if path == "/chat/socket":
+                self.websocket()
                 return
             connection = http.client.HTTPConnection(
                 "127.0.0.1", development.backend_port, timeout=60

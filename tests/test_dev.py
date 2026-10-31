@@ -155,9 +155,9 @@ class ProxyTests(unittest.TestCase):
         self.addCleanup(cleanup)
         return server
 
-    def request(self, path, method="GET"):
+    def request(self, path, method="GET", headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.preview.server_port)
-        connection.request(method, path)
+        connection.request(method, path, headers=headers or {})
         response = connection.getresponse()
         result = response.status, response.getheaders(), response.read()
         connection.close()
@@ -193,6 +193,19 @@ class ProxyTests(unittest.TestCase):
         code, headers, _ = self.request("/", "POST")
         self.assertEqual(code, 405)
         self.assertIn(("Allow", "GET, HEAD"), headers)
+
+    def test_websocket_origin_upgrade_and_discovery_failures_are_explicit(self):
+        self.development.publish("ready", "done")
+        origin = f"http://127.0.0.1:{self.preview.server_port}"
+        code, _, _ = self.request("/chat/socket", headers={"Origin": "http://evil.invalid"})
+        self.assertEqual(code, 403)
+        code, _, _ = self.request("/chat/socket", headers={"Origin": origin})
+        self.assertEqual(code, 426)
+        code, _, body = self.request(
+            "/chat/socket", headers={"Origin": origin, "Upgrade": "websocket"}
+        )
+        self.assertEqual(code, 502)
+        self.assertIn(b"WebSocket tunnel failed", body)
 
 
 if __name__ == "__main__":

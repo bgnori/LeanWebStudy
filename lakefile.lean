@@ -10,7 +10,7 @@ private def sqliteLinkArgs : Array String := run_io do
   let library <- IO.FS.realPath path
   let some directory := library.parent
     | throw (IO.userError "SQLite library has no parent directory")
-  return #["-B", directory.toString, "-L", directory.toString, "-lsqlite3"]
+  return #["-B", directory.toString, "-L", directory.toString, "-lsqlite3", "-lwebsockets"]
 
 package LeanWebStudy where
   version := v!"0.1.0"
@@ -35,6 +35,15 @@ target sqlite.o pkg : System.FilePath := do
 extern_lib sqlite pkg := do
   let obj <- sqlite.o.fetch
   buildStaticLib (pkg.staticLibDir / nameToStaticLib "sqlite") #[obj]
+
+target chat.o pkg : System.FilePath := do
+  let src <- inputFile (pkg.dir / "native" / "chat.c") true
+  buildO (pkg.buildDir / "native" / "chat.o") src
+    #["-I", (← getLeanIncludeDir).toString] #["-fPIC", "-Wall", "-Wextra", "-Werror"]
+
+extern_lib chat pkg := do
+  let obj <- chat.o.fetch
+  buildStaticLib (pkg.staticLibDir / nameToStaticLib "chat") #[obj]
 
 @[test_driver]
 lean_exe LeanWebStudyTests where

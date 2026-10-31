@@ -8,8 +8,8 @@ and serves dynamically generated web content backed by SQLite.
 - VS Code with the **Lean 4** extension.
 - [Elan](https://github.com/leanprover/elan) and the toolchain pinned in
   [lean-toolchain](lean-toolchain): **Lean 4.35.0**.
-- Linux with a C compiler and the SQLite development library. On Debian/Ubuntu:
-  `sudo apt-get install build-essential libsqlite3-dev`.
+- Linux with a C compiler, SQLite and libwebsockets development libraries. On Debian/Ubuntu:
+  `sudo apt-get install build-essential libsqlite3-dev libwebsockets-dev`.
 
 HTTP serving uses `Std.Async` and `Std.Http.Server`; [Lithe](https://github.com/JoshuaPurtell/lithe)
 provides route registration and dispatch. The optional Lithe Rust server shim is
@@ -45,6 +45,8 @@ Stop it with Ctrl+C.
 | `GET /wiki/`, `/wiki/{slug}` | SQLite-backed wiki index and article |
 | `GET /wiki/new`, `/wiki/edit/{slug}` | Wiki article editor |
 | `POST /wiki/create`, `/wiki/save`, `/wiki/delete` | Create, update, and delete wiki articles |
+| `GET /chat/` | Real-time WebSocket chat page |
+| `GET /chat/endpoint` | WebSocket port metadata for the development preview |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
 
@@ -56,6 +58,12 @@ Failed database requests return HTTP 500 without exposing SQLite error details.
 The shared request counter and database connection are protected by mutexes,
 while the standard HTTP server handles connections asynchronously.
 Dynamic responses disable caching.
+The chat uses libwebsockets through a native C bridge, with Lean JSON validation.
+Messages and recent history travel over WebSocket, not HTTP polling or POST.
+Open `/chat/` in two tabs to try it. A loopback-only ephemeral WebSocket port is
+started in the same process; the development preview tunnels `/chat/socket`
+through its stable port. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
+for setup, limits, reconnection behavior, and local-only restrictions.
 The HTTP adapter preserves Lithe's Content-Type without adding another:
 HTML pages use `text/html; charset=utf-8`, JSON endpoints use
 `application/json; charset=utf-8`, and text errors use `text/plain; charset=utf-8`.
@@ -88,7 +96,8 @@ This first stage deliberately rebuilds/restarts for **every** watched change,
 including page-only edits. Rapid saves are debounced, and changes during a build
 or startup cause another build rather than publishing that outdated result.
 Each successful cycle prints `Updated in ...s` to guide later optimization.
-All backend restarts recreate the in-memory SQLite database and reset the counter.
+All backend restarts recreate the in-memory SQLite database, reset the counter,
+and clear the in-memory chat history.
 The old page stays visible in an already-open browser, but the old backend is
 stopped before building to avoid mixing old server code with new shared modules.
 
@@ -108,7 +117,8 @@ inotify, or watchdog/watchfiles, are alternatives. Browser status polling is
 separate. See the [design rationale (Japanese)](docs/module-reload.md)
 for trade-offs and the measurement-driven optimization policy.
 
-The watcher is a loopback-only, GET/HEAD development preview proxy, not a
+The watcher is a loopback-only, GET/HEAD development preview proxy with a
+`/chat/socket` WebSocket tunnel, not a
 production server. It reserves `/__dev/status` and injects a small polling client
 only in preview HTML. Normal `lake exe leanwebstudy` behavior is unchanged.
 Do not run multiple watchers/builds against the same checkout concurrently.
@@ -131,6 +141,7 @@ Pages are loaded from the `Pages/` directory by default. Each feature has an
 - `/templates/` and `/templates/lean-html`
 - `/board/` (SQLite-backed bulletin board)
 - `/wiki/` and `/wiki/{slug}` (SQLite-backed wiki)
+- `/chat/` (WebSocket real-time chat)
 
 For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs
 `Pages/blog/new.lean`. Both `/blog` and `/blog/` open the directory index.
@@ -346,7 +357,8 @@ It verifies database-backed HTML, bulletin board POST/GET persistence and escapi
 404/405 behavior, 32 concurrent queries with unique IDs, and port validation.
 `lake test` also tests text binding, integer limits, statement errors and recovery,
 HTML escaping, and isolation between in-memory connections.
-CI installs SQLite, then runs the build, Lean tests, and both HTTP smoke tests.
+CI installs SQLite and libwebsockets, then runs the build, Lean tests, HTTP smoke
+tests, watcher tests, and WebSocket chat tests.
 
 User mutation APIs, durable storage, authentication, and a production reverse
 proxy/TLS setup are intentionally not implemented yet.

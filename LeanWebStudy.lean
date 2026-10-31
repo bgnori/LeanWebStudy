@@ -2,6 +2,7 @@ import MapleSQL
 import Html
 import LeanWebStudy.Database
 import LeanWebStudy.DevPages
+import LeanWebStudy.Chat
 import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch
@@ -37,6 +38,7 @@ structure WebHandler where
   database : Std.Mutex Database
   pages : DevPages
   router : Lithe.Router
+  chatPort : UInt16 := 0
 
 def rowsJson (rows : Array (Array MapleSQL.Value)) : Lean.Json :=
   .arr (rows.map fun row => .arr (row.map valueJson))
@@ -125,7 +127,9 @@ def WebHandler.pageContext (self : WebHandler) (path : String) : IO Page.Context
   let emailQuery <- renderQuery (SampleData.emailsByNameStatement SampleData.duplicateName)
   let demo <- sqliteDemoHtml demoQuery (← self.execute demoQuery)
     emailQuery (← self.execute emailQuery)
-  return { requestId, path, usersHtml := users, sqliteDemoHtml := demo }
+  return {
+    requestId, path, usersHtml := users, sqliteDemoHtml := demo
+    chatPort := self.chatPort.toNat }
 
 def WebHandler.boardPosts (self : WebHandler) : IO (Array Page.BoardPost) := do
   let query <- renderQuery (.select #[.all] "posts" none)
@@ -336,6 +340,10 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
   Lithe.Router.empty
     |>.get "/health" (self.healthRoute)
     |>.get "/api/query" (self.queryRoute)
+    |>.get "/chat/endpoint" (fun context => do
+      if context.req.path != "/chat/endpoint" then self.fallback context
+      else pure ((Lithe.Response.json (Lean.Json.mkObj [
+        ("port", Lean.toJson self.chatPort.toNat)])).setHeader "Cache-Control" "no-store"))
     |>.get "/board/" (self.boardGetRoute)
     |>.post "/board/" (self.boardPostRoute)
     |>.post "/wiki/create" (self.wikiPostRoute "create")
@@ -344,9 +352,10 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
     |>.withFallback (self.fallback)
 
 def WebHandler.create
-    (counter : Std.Mutex Nat) (database : Std.Mutex Database) (pages : DevPages) :
+    (counter : Std.Mutex Nat) (database : Std.Mutex Database) (pages : DevPages)
+    (chatPort : UInt16 := 0) :
     WebHandler :=
-  let handler : WebHandler := { counter, database, pages, router := .empty }
+  let handler : WebHandler := { counter, database, pages, chatPort, router := .empty }
   { handler with router := handler.registerRoutes }
 
 def WebHandler.toLitheRequest (request : Request Body.Stream) : IO Lithe.Request := do

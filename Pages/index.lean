@@ -11,4 +11,5 @@ def main : IO Unit :=
         "<li><a href=\"/templates/\">lean-htmlテンプレート</a></li>" ++
         "<li><a href=\"/board/\">掲示板 Webアプリ</a></li>" ++
         "<li><a href=\"/wiki/\">Wiki Webアプリ</a></li>" ++
+        "<li><a href=\"/chat/\">WebSocket リアルタイムチャット</a></li>" ++
         "</ul></body></html>")

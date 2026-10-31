@@ -24,6 +24,12 @@ def queryMatches (requestId : Nat) : Bool :=
 
 #guard escapeHtml "<script>&\"'" == "&lt;script&gt;&amp;&quot;&#39;"
 
+#guard (Chat.response 1
+  "{\"type\":\"message\",\"requestId\":\"test\",\"author\":\" Ada \",\"message\":\"Hi\"}".toUTF8).1
+#guard !(Chat.response 1 "{}".toUTF8).1
+#guard !(Chat.response 1
+  "{\"type\":\"message\",\"requestId\":\"test\",\"author\":\" \",\"message\":\"Hi\"}".toUTF8).1
+
 #guard DevPages.relativePath "/" == some (System.FilePath.mk "index.lean")
 #guard DevPages.relativePath "/hello" == some (System.FilePath.mk "hello.lean")
 #guard DevPages.relativePath "/sqlite/" ==
@@ -57,12 +63,14 @@ def main : IO Unit := do
   let context : Page.Context := {
     requestId := 7, path := "/hello", usersHtml := "<ul></ul>", sqliteDemoHtml := "<pre>demo</pre>",
     boardPosts := #[{ id := 3, author := "Ada", message := "Hello" }],
-    wikiArticles := #[{ slug := "hello", title := "Hello", content := "Wiki text" }] }
+    wikiArticles := #[{ slug := "hello", title := "Hello", content := "Wiki text" }],
+    chatPort := 12345 }
   match (Lean.fromJson? (Lean.toJson context) : Except String Page.Context) with
   | .ok decoded =>
     unless decoded.requestId == context.requestId && decoded.path == context.path &&
         decoded.usersHtml == context.usersHtml && decoded.sqliteDemoHtml == context.sqliteDemoHtml &&
-        decoded.boardPosts == context.boardPosts && decoded.wikiArticles == context.wikiArticles do
+        decoded.boardPosts == context.boardPosts && decoded.wikiArticles == context.wikiArticles &&
+        decoded.chatPort == context.chatPort do
       throw (IO.userError "Page context must preserve every field through JSON")
   | .error error => throw (IO.userError s!"Page context decoding failed: {error}")
   let legacyContext := Lean.Json.mkObj [
@@ -71,7 +79,7 @@ def main : IO Unit := do
   match (Lean.fromJson? legacyContext : Except String Page.Context) with
   | .ok decoded =>
     unless decoded.sqliteDemoHtml.isEmpty && decoded.boardPosts.isEmpty &&
-        decoded.wikiArticles.isEmpty do
+        decoded.wikiArticles.isEmpty && decoded.chatPort == 0 do
       throw (IO.userError "Legacy page context must default optional fields")
   | .error error => throw (IO.userError s!"Legacy page context decoding failed: {error}")
   let invalidContext := Lean.Json.mkObj [
