@@ -1,0 +1,19 @@
+name = "LeanWebStudy"
+version = "0.1.0"
+defaultTargets = ["leanwebstudy"]
+testDriver = "LeanWebStudyTests"
+
+[[require]]
+name = "maplesql"
+git = "https://github.com/bgnori/MapleSQL.git"
+rev = "2c6cd91028888defd2c9f678386efe069a6d78fc"
+
+[[lean_lib]]
+name = "LeanWebStudy"
+
+[[lean_lib]]
+name = "LeanWebStudyTests"
+
+[[lean_exe]]
+name = "leanwebstudy"
+root = "Main"

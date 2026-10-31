@@ -1,0 +1,16 @@
+{"version": "1.3.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/bgnori/MapleSQL.git",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "2c6cd91028888defd2c9f678386efe069a6d78fc",
+   "name": "maplesql",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "2c6cd91028888defd2c9f678386efe069a6d78fc",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "LeanWebStudy",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}
