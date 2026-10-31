@@ -4,6 +4,7 @@ import LeanWebStudy.Database
 import LeanWebStudy.DevPages
 import LeanWebStudy.Chat
 import LeanWebStudy.Pong
+import LeanWebStudy.SSEChat
 import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch
@@ -39,7 +40,9 @@ structure WebHandler where
   database : Std.Mutex Database
   pages : DevPages
   router : Lithe.Router
+  httpPort : UInt16
   chatPort : UInt16 := 0
+  sseChat : SSEChat.Server
 
 def rowsJson (rows : Array (Array MapleSQL.Value)) : Lean.Json :=
   .arr (rows.map fun row => .arr (row.map valueJson))
@@ -337,10 +340,43 @@ def WebHandler.queryRoute (self : WebHandler) : Lithe.Handler := fun context => 
   else
     self.queryResponse
 
+def WebHandler.sseChatSendRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  if context.req.path != "/chat-sse/send" then
+    self.fallback context
+  else
+    let some host := context.req.header? "host"
+      | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+    let some origin := context.req.header? "origin"
+      | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+    let allowedHosts := #[
+      s!"127.0.0.1:{self.httpPort}",
+      s!"localhost:{self.httpPort}"]
+    unless allowedHosts.contains host && origin == "http://" ++ host do
+      throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+    let params ← Lithe.Form.params (limit := some 8192) context
+    let field (name : String) : Option String := do
+      let values ← params.get? name
+      guard (values.size == 1)
+      values[0]?
+    let some author := field "author"
+      | throw (Lithe.HttpError.badRequest "exactly one author field is required")
+    let some message := field "message"
+      | throw (Lithe.HttpError.badRequest "exactly one message field is required")
+    let some requestId := field "requestId"
+      | throw (Lithe.HttpError.badRequest "exactly one requestId field is required")
+    match ← SSEChat.publish self.sseChat author message requestId with
+    | .error error => throw (Lithe.HttpError.badRequest error)
+    | .ok id =>
+      let response := Lithe.Response.json (Lean.Json.mkObj [
+        ("id", Lean.toJson id), ("accepted", Lean.toJson true)])
+      pure (response.withStatus 202 |>.setHeader "Cache-Control" "no-store")
+
 def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
   Lithe.Router.empty
     |>.get "/health" (self.healthRoute)
     |>.get "/api/query" (self.queryRoute)
+    |>.get "/chat-sse/events" (fun context => self.fallback context)
+    |>.post "/chat-sse/send" (self.sseChatSendRoute)
     |>.get "/chat/endpoint" (fun context => do
       if context.req.path != "/chat/endpoint" then self.fallback context
       else pure ((Lithe.Response.json (Lean.Json.mkObj [
@@ -354,9 +390,10 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
 
 def WebHandler.create
     (counter : Std.Mutex Nat) (database : Std.Mutex Database) (pages : DevPages)
-    (chatPort : UInt16 := 0) :
+    (sseChat : SSEChat.Server) (httpPort chatPort : UInt16) :
     WebHandler :=
-  let handler : WebHandler := { counter, database, pages, chatPort, router := .empty }
+  let handler : WebHandler := {
+    counter, database, pages, sseChat, httpPort, chatPort, router := .empty }
   { handler with router := handler.registerRoutes }
 
 def WebHandler.toLitheRequest (request : Request Body.Stream) : IO Lithe.Request := do
@@ -381,27 +418,57 @@ def WebHandler.toLitheRequest (request : Request Body.Stream) : IO Lithe.Request
     body := ByteArray.empty
     bodyStream := some bodyStream }
 
-def WebHandler.toHttpResponse (response : Lithe.Response) :
-    Std.Async.Async (Response Body.Full) := do
-  if response.bodyStream.isSome then
-    throw (IO.userError "Streaming Lithe responses are not supported by this server adapter")
+def WebHandler.toHttpResponse (response : Lithe.Response)
+    (onStreamFinish : IO Unit := pure ()) :
+    Std.Async.Async (Response Body.Any) := do
   let some status := Std.Http.Status.ofCode none response.status.code
     | throw (IO.userError s!"Invalid Lithe response status: {response.status.code}")
-  let some body := String.fromUTF8? response.body
-    | throw (IO.userError "Lithe response body is not valid UTF-8")
   let builder := response.headers.foldl
     (fun builder (name, value) => builder.header! name value)
     (Std.Http.Response.new.status status)
-  builder.fromBytes body.toUTF8
+  match response.bodyStream with
+  | none =>
+    let body ← Body.Full.ofByteArray response.body
+    return ((builder.body body : Response Body.Full) : Response Body.Any)
+  | some source =>
+    let body ← Body.stream fun output => do
+      try
+        let mut pumping := true
+        while pumping do
+          match ← source.next.run with
+          | .ok none => pumping := false
+          | .ok (some bytes) =>
+            output.send (Chunk.ofByteArray bytes)
+            pure ()
+          | .error error =>
+            IO.eprintln s!"HTTP response stream failed: {error.message}"
+            throw (IO.userError s!"HTTP response stream failed: {error.message}")
+      finally
+        onStreamFinish
+    return ((builder.body body : Response Body.Stream) : Response Body.Any)
 
 instance : Server.Handler WebHandler where
-  ResponseBody := Body.Full
+  ResponseBody := Body.Any
   onRequest self request := do
-    let response <- Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated) do
-      let litheRequest ← WebHandler.toLitheRequest request
-      Lithe.dispatch self.router (Lithe.RequestCtx.ofRequest
-        litheRequest))
-    WebHandler.toHttpResponse response
+    let path := toString request.line.uri.path
+    if path == "/chat-sse/events" then
+      if request.line.method != .get then
+        let response := ((Lithe.Response.text "Only GET is supported\n")
+          |>.withStatus 405 |>.setHeader "Allow" "GET")
+        WebHandler.toHttpResponse response
+      else
+        match ← SSEChat.subscribe self.sseChat with
+        | none =>
+          WebHandler.toHttpResponse ((Lithe.Response.text "Too many SSE chat clients\n")
+            |>.withStatus 503)
+        | some (id, stream) =>
+          let response := Lithe.Response.sse stream
+          WebHandler.toHttpResponse response (SSEChat.unsubscribe self.sseChat id)
+    else
+      let response <- Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated) do
+        let litheRequest ← WebHandler.toLitheRequest request
+        Lithe.dispatch self.router (Lithe.RequestCtx.ofRequest litheRequest))
+      WebHandler.toHttpResponse response
   onFailure _ error := IO.eprintln s!"HTTP transport failure: {error}"
 
 end LeanWebStudy

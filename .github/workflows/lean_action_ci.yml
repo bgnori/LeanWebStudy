@@ -20,5 +20,5 @@ jobs:
         run: bash tests/dev-pages-smoke.sh
       - name: Development watcher tests
         run: python3 -m unittest discover -s tests -p 'test_dev*.py'
-      - name: WebSocket chat tests
+      - name: WebSocket and SSE chat tests
         run: python3 -m unittest discover -s tests -p 'test_chat.py'

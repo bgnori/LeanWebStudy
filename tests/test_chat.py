@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from urllib.parse import urlencode
 import unittest
 import uuid
 from http.server import ThreadingHTTPServer
@@ -104,6 +105,38 @@ class WebSocket:
         self.socket.close()
 
 
+class SSEClient:
+    def __init__(self, port):
+        self.connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        self.connection.request("GET", "/chat-sse/events")
+        self.response = self.connection.getresponse()
+        if self.response.status != 200:
+            raise ConnectionError(f"SSE stream rejected: {self.response.status}")
+        if self.response.getheader("Content-Type") != "text/event-stream; charset=utf-8":
+            self.connection.close()
+            raise AssertionError("SSE response must use the event-stream content type")
+        self.buffer = bytearray()
+
+    def event(self):
+        while b"\n\n" not in self.buffer:
+            chunk = self.response.read1(65536)
+            if not chunk:
+                raise ConnectionError("SSE stream disconnected")
+            self.buffer.extend(chunk)
+        raw, remainder = self.buffer.split(b"\n\n", 1)
+        self.buffer = bytearray(remainder)
+        fields = {}
+        for line in raw.decode().splitlines():
+            if not line or line.startswith(":"):
+                continue
+            name, _, value = line.partition(":")
+            fields[name] = value.lstrip()
+        return fields
+
+    def close(self):
+        self.connection.close()
+
+
 class ChatTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -165,6 +198,80 @@ class ChatTests(unittest.TestCase):
         history = client.event()
         self.assertEqual(history["type"], "history")
         return client, history["messages"]
+
+    def connect_sse(self, port=None):
+        client = SSEClient(port or self.http_port)
+        self.addCleanup(client.close)
+        history = client.event()
+        self.assertIn("id", history)
+        self.assertEqual(json.loads(history["data"])["type"], "history")
+        return client, json.loads(history["data"])["messages"]
+
+    def test_sse_chat_history_post_broadcast_and_validation(self):
+        first, _ = self.connect_sse()
+        second, _ = self.connect_sse()
+        body = urlencode({
+            "author": "  Ada  ", "message": "SSE says hello",
+            "requestId": "sse-test-1",
+        })
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.http_port, timeout=5
+        )
+        connection.request(
+            "POST", "/chat-sse/send", body=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": self.origin,
+            },
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 202)
+        self.assertTrue(json.loads(response.read())["accepted"])
+        connection.close()
+
+        one = first.event()
+        two = second.event()
+        self.assertEqual(one["id"], two["id"])
+        message = json.loads(one["data"])
+        self.assertEqual(message["type"], "message")
+        self.assertEqual(message["author"], "Ada")
+        self.assertEqual(message["message"], "SSE says hello")
+        self.assertEqual(message["requestId"], "sse-test-1")
+
+        third, history = self.connect_sse()
+        self.assertEqual(history[-1]["id"], message["id"])
+        self.assertEqual(self.request("/chat-sse/events", "POST")[0], 405)
+        self.assertEqual(self.request("/chat-sse/", "POST")[0], 405)
+        status, page = self.request("/chat-sse/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"new EventSource", page)
+        self.assertIn(b"/chat-sse/send", page)
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.http_port, timeout=5
+        )
+        connection.request(
+            "POST", "/chat-sse/send",
+            body=urlencode({"author": " ", "message": "bad", "requestId": "bad"}),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": self.origin,
+            },
+        )
+        response = connection.getresponse()
+        self.assertEqual(response.status, 400)
+        connection.close()
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.http_port, timeout=5
+        )
+        connection.request(
+            "POST", "/chat-sse/send",
+            body=urlencode({"author": "Ada", "message": "no origin", "requestId": "no-origin"}),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(connection.getresponse().status, 403)
+        connection.close()
 
     def test_pong_roles_validation_broadcast_and_disconnect_presence(self):
         first = WebSocket(self.port, self.origin, "/pong/socket", "leanwebstudy-pong")
@@ -332,6 +439,34 @@ class ChatTests(unittest.TestCase):
         direct, _ = self.connect()
         client.send(message="through-preview")
         self.assertEqual(client.event(), direct.event())
+        sse, _ = self.connect_sse(port)
+        body = urlencode({
+            "author": "Preview", "message": "sse-through-preview",
+            "requestId": "preview-sse-1",
+        })
+        post = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        post.request(
+            "POST", "/chat-sse/send", body=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": origin,
+            },
+        )
+        response = post.getresponse()
+        self.assertEqual(response.status, 202)
+        response.read()
+        post.close()
+        self.assertEqual(json.loads(sse.event()["data"])["message"], "sse-through-preview")
+        post = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        post.request(
+            "POST", "/chat-sse/send", body=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "http://evil.invalid",
+            },
+        )
+        self.assertEqual(post.getresponse().status, 403)
+        post.close()
         pong = WebSocket(port, origin, "/pong/socket", "leanwebstudy-pong")
         self.addCleanup(pong.close)
         self.assertEqual(pong.event(), {"type": "welcome", "player": 1})

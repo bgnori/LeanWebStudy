@@ -364,6 +364,42 @@ def handler_for(development):
             finally:
                 connection.close()
 
+        def sse_stream(self):
+            self.close_connection = True
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", development.backend_port, timeout=60
+            )
+            try:
+                connection.request(
+                    "GET", self.path, headers={"Accept-Encoding": "identity"}
+                )
+                response = connection.getresponse()
+                if response.status != 200:
+                    self.send_body(response.status, response.getheader(
+                        "Content-Type", "text/plain; charset=utf-8"), response.read())
+                    return
+                self.send_response(response.status)
+                for name, value in response.getheaders():
+                    if name.lower() not in {
+                        "content-length", "transfer-encoding", "connection",
+                        "keep-alive",
+                    }:
+                        self.send_header(name, value)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                while True:
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, http.client.IncompleteRead):
+                pass
+            except (OSError, http.client.HTTPException) as error:
+                print(f"[preview] SSE stream ended: {error}", file=sys.stderr, flush=True)
+            finally:
+                connection.close()
+
         def do_GET(self):
             state = development.status()
             path = self.path.split("?", 1)[0]
@@ -382,6 +418,13 @@ def handler_for(development):
                 return
             if path in {"/chat/socket", "/pong/socket"}:
                 self.websocket(path)
+                return
+            if path == "/chat-sse/events":
+                if self.command == "HEAD":
+                    self.send_body(405, "text/plain; charset=utf-8",
+                                   b"Only GET is supported\n", [("Allow", "GET")])
+                else:
+                    self.sse_stream()
                 return
             connection = http.client.HTTPConnection(
                 "127.0.0.1", development.backend_port, timeout=60
@@ -425,7 +468,62 @@ def handler_for(development):
                 [("Allow", "GET, HEAD")],
             )
 
-        do_POST = reject_method
+        def do_POST(self):
+            if self.path.split("?", 1)[0] != "/chat-sse/send":
+                self.reject_method()
+                return
+            preview_port = self.server.server_port
+            allowed_hosts = {
+                f"127.0.0.1:{preview_port}", f"localhost:{preview_port}",
+            }
+            host = self.headers.get("Host", "")
+            if (host not in allowed_hosts or
+                    self.headers.get("Origin") != "http://" + host):
+                self.send_body(403, "text/plain; charset=utf-8", b"Invalid request origin\n")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self.send_body(400, "text/plain; charset=utf-8", b"Invalid request body size\n")
+                return
+            if length < 0 or length > 8192:
+                self.send_body(400, "text/plain; charset=utf-8", b"Invalid request body size\n")
+                return
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self.send_body(400, "text/plain; charset=utf-8", b"Incomplete request body\n")
+                return
+            try:
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", development.backend_port, timeout=15
+                )
+                try:
+                    connection.request(
+                        "POST", self.path, body=body,
+                        headers={
+                            "Content-Type": self.headers.get(
+                                "Content-Type", "application/octet-stream"),
+                            "Content-Length": str(len(body)),
+                            "Origin": f"http://127.0.0.1:{development.backend_port}",
+                        },
+                    )
+                    response = connection.getresponse()
+                    self.send_body(
+                        response.status,
+                        response.getheader("Content-Type", "text/plain; charset=utf-8"),
+                        response.read(),
+                        [(name, value) for name, value in response.getheaders()
+                         if name.lower() not in {
+                             "content-type", "content-length", "cache-control",
+                             "connection", "transfer-encoding", "keep-alive",
+                         }],
+                    )
+                finally:
+                    connection.close()
+            except (OSError, http.client.HTTPException) as error:
+                print(f"[preview] SSE POST failed: {error}", file=sys.stderr, flush=True)
+                self.send_body(502, "text/plain; charset=utf-8", b"Backend request failed\n")
+
         do_PUT = reject_method
         do_DELETE = reject_method
         do_PATCH = reject_method

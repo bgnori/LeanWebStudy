@@ -46,6 +46,9 @@ Stop it with Ctrl+C.
 | `GET /wiki/new`, `/wiki/edit/{slug}` | Wiki article editor |
 | `POST /wiki/create`, `/wiki/save`, `/wiki/delete` | Create, update, and delete wiki articles |
 | `GET /chat/` | Real-time WebSocket chat page |
+| `GET /chat-sse/` | SSE chat page (server events + HTTP POST messages) |
+| `GET /chat-sse/events` | Server-Sent Events chat stream |
+| `POST /chat-sse/send` | Validate and broadcast a chat message |
 | `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /chat/endpoint` | WebSocket port metadata for the development preview |
 | `GET /health` | JSON health check |
@@ -67,9 +70,14 @@ and `/pong/socket` through its stable port. Pong exchanges paddle positions and
 the player-1-authoritative ball state over WebSocket; open `/pong/` in two tabs
 or devices to play. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
 for setup, limits, reconnection behavior, and local-only restrictions.
+The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
+updates and POST for sending; its latest 50 messages are in-memory and EventSource
+handles reconnection. Both chat implementations are independent and local-only.
 The HTTP adapter preserves Lithe's Content-Type without adding another:
 HTML pages use `text/html; charset=utf-8`, JSON endpoints use
 `application/json; charset=utf-8`, and text errors use `text/plain; charset=utf-8`.
+Lithe response streams are bridged to the standard server's chunked HTTP bodies
+for SSE delivery.
 
 ## Save-to-preview development loop
 
@@ -362,7 +370,7 @@ It verifies database-backed HTML, bulletin board POST/GET persistence and escapi
 `lake test` also tests text binding, integer limits, statement errors and recovery,
 HTML escaping, and isolation between in-memory connections.
 CI installs SQLite and libwebsockets, then runs the build, Lean tests, HTTP smoke
-tests, watcher tests, and WebSocket chat tests.
+tests, watcher tests, and WebSocket/SSE chat tests.
 
 User mutation APIs, durable storage, authentication, and a production reverse
 proxy/TLS setup are intentionally not implemented yet.

@@ -19,10 +19,12 @@ def main (args : List String) : IO Unit := do
   let pages <- LeanWebStudy.DevPages.open (directory.getD "Pages")
   let counter <- Std.Mutex.new 0
   let database <- Std.Mutex.new (← LeanWebStudy.Database.seededMemory)
+  let sseChat <- LeanWebStudy.SSEChat.new
   let chat ← LeanWebStudy.Chat.openServer port.toUInt16
     LeanWebStudy.Chat.response LeanWebStudy.Pong.response
   let chatPort ← LeanWebStudy.Chat.port chat
-  let handler := LeanWebStudy.WebHandler.create counter database pages chatPort
+  let handler := LeanWebStudy.WebHandler.create counter database pages sseChat
+    port.toUInt16 chatPort
   Std.Async.Async.block do
     let server <- Std.Http.Server.serve
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
@@ -31,6 +33,7 @@ def main (args : List String) : IO Unit := do
     IO.println s!"Pages: {pages.directory} (reloaded per request)"
     IO.println s!"WebSocket chat: ws://127.0.0.1:{chatPort}/chat/socket"
     IO.println s!"WebSocket Pong: ws://127.0.0.1:{chatPort}/pong/socket"
+    IO.println s!"SSE chat: http://127.0.0.1:{port}/chat-sse/"
     discard <| Std.Async.Async.concurrently server.waitShutdown
       (Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated)
         (LeanWebStudy.Chat.run chat)))
