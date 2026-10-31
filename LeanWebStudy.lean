@@ -1,4 +1,5 @@
 import MapleSQL
+import Html
 import LeanWebStudy.Database
 import LeanWebStudy.DevPages
 import Lean.Data.Json

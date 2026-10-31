@@ -59,6 +59,7 @@ to the individual exercises below it:
 - `/sqlite/users` runs [Pages/sqlite/users.lean](Pages/sqlite/users.lean).
 - `/maplesql/parameterized-query` runs
   [Pages/maplesql/parameterized-query.lean](Pages/maplesql/parameterized-query.lean).
+- `/templates/lean-html` runs [Pages/templates/lean-html.lean](Pages/templates/lean-html.lean).
 
 For example, `/hello` runs `Pages/hello.lean`, and `/blog/new` runs
 `Pages/blog/new.lean`.
@@ -98,6 +99,26 @@ Use `LeanWebStudy.Page.escapeHtml` for any additional untrusted text.
 Compilation, rendering, and protocol failures produce HTTP 500 and diagnostics
 on server stderr, without exposing compiler output in the HTTP response.
 Development page responses, including errors and missing pages, use `no-store`.
+
+## HTML templating
+
+The project is written in Lean 4, so template engines for other language
+runtimes (such as Jinja, EJS, or Handlebars) cannot be used directly by its
+page workers. The existing Lean-native option found for composing HTML is
+[lean-html](https://github.com/paulbutcher/lean-html), included as a pinned Lake
+dependency. It is an embedded, typed HTML DSL rather than a separate
+`{{variable}}` template-file engine:
+
+| Option | Lean 4 compatible | Approach | Main trade-off |
+| --- | --- | --- | --- |
+| [lean-html](https://github.com/paulbutcher/lean-html) | Yes | Typed HTML nodes composed in Lean | Checks element content models and escapes text/attributes, but markup remains Lean source |
+| Mustache / Handlebars / Jinja / EJS | No native Lean implementation found | Text templates rendered by their respective runtimes | Would require a separate runtime or a new integration layer |
+| String concatenation/interpolation | Built in | Construct HTML as `String` | Flexible, but tag structure and escaping are the caller's responsibility |
+
+The [lean-html sample](Pages/templates/lean-html.lean) shows a full page
+composed from typed elements and inserts request context as text. It uses
+automatic escaping instead of `Node.unsafeRaw`; retain that default for
+untrusted content. `lake update` resolves the pinned dependency before building.
 
 Workers run on dedicated tasks so compilation or a slow renderer does not block
 health checks. This approach prioritizes a simple Lean-compatible development

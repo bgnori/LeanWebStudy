@@ -19,6 +19,9 @@ package LeanWebStudy where
 require maplesql from git
   "https://github.com/bgnori/MapleSQL.git" @ "2c6cd91028888defd2c9f678386efe069a6d78fc"
 
+require html from git
+  "https://github.com/paulbutcher/lean-html" @ "573ae2609ceef7afd509d0fcce533ddc913e990f"
+
 lean_lib LeanWebStudy
 
 target sqlite.o pkg : System.FilePath := do

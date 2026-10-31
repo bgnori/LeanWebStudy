@@ -22,10 +22,17 @@ cleanup() {
     "$work/pages/slow.lean" "$work/pages/outside.lean" \
     "$work/pages/blog/new.lean" "$work/server.log" "$work/body" \
     "$work/headers" "$work/slow-body" "$work/started" "$work/outside.lean"
+  rm -f "$work/template-response"
   rmdir "$work/pages/blog" "$work/pages" "$work"
 }
 trap cleanup EXIT
+
 mkdir "$work/pages/blog"
+
+printf '%s' '{"requestId":1,"path":"<script>alert(1)</script>","usersHtml":"<ul></ul>"}' |
+  lake env lean --run Pages/templates/lean-html.lean >"$work/template-response"
+jq -e 'contains("&lt;script&gt;alert(1)&lt;/script&gt;") and
+  contains("lean-html テンプレートサンプル")' "$work/template-response" >/dev/null
 
 fail() {
   echo "FAIL: $*" >&2
