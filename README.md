@@ -51,6 +51,9 @@ Failed database requests return HTTP 500 without exposing SQLite error details.
 The shared request counter and database connection are protected by mutexes,
 while the standard HTTP server handles connections asynchronously.
 Dynamic responses disable caching.
+The HTTP adapter preserves Lithe's Content-Type without adding another:
+HTML pages use `text/html; charset=utf-8`, JSON endpoints use
+`application/json; charset=utf-8`, and text errors use `text/plain; charset=utf-8`.
 
 ## Page routing and live reload
 

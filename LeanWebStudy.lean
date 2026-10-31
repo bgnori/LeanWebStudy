@@ -144,7 +144,7 @@ def WebHandler.toHttpResponse (response : Lithe.Response) :
   let builder := response.headers.foldl
     (fun builder (name, value) => builder.header! name value)
     (Std.Http.Response.new.status status)
-  builder.text body
+  builder.fromBytes body.toUTF8
 
 instance : Server.Handler WebHandler where
   ResponseBody := Body.Full

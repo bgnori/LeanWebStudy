@@ -42,6 +42,14 @@ done
 kill -0 "$server_pid" 2>/dev/null || fail "Server exited during readiness"
 jq -e '.status == "ok"' "$work/body" >/dev/null || fail "Health response"
 
+check_content_type() {
+  local expected="$1" count
+  count="$(grep -ic '^content-type:' "$work/headers" || true)"
+  [[ "$count" == 1 ]] || fail "Expected exactly one Content-Type header, got $count"
+  tr -d '\r' <"$work/headers" | grep -Fxi "content-type: $expected" >/dev/null ||
+    fail "Expected Content-Type: $expected"
+}
+
 check_status() {
   local expected="$1"
   shift
@@ -49,10 +57,18 @@ check_status() {
   actual="$(curl -sS --max-time 5 -D "$work/headers" -o "$work/body" \
     -w '%{http_code}' "$@")"
   [[ "$actual" == "$expected" ]] || fail "Expected HTTP $expected, got $actual"
+  if [[ "$expected" != 200 ]]; then
+    check_content_type 'text/plain; charset=utf-8'
+  elif [[ "$*" == *"$base/api/query"* || "$*" == *"$base/health"* ]]; then
+    check_content_type 'application/json; charset=utf-8'
+  else
+    check_content_type 'text/html; charset=utf-8'
+  fi
 }
 
+check_status 200 "$base/health"
+
 check_status 200 "$base/"
-grep -qi '^content-type: text/html' "$work/headers" || fail "HTML content type"
 grep -qi '^cache-control: no-store' "$work/headers" || fail "Dynamic cache policy"
 grep -q 'href="/sqlite/">MapleSQLで操作するSQLite' "$work/body" ||
   fail "Combined MapleSQL and SQLite feature index link"
@@ -82,7 +98,6 @@ check_status 404 "$base/maplesql/"
 check_status 404 "$base/maplesql/parameterized-query"
 
 check_status 200 "$base/api/query"
-grep -qi '^content-type: application/json' "$work/headers" || fail "JSON content type"
 jq -e '.requestId == 6 and .sql == "SELECT * FROM \"users\" WHERE \"id\" > ?" and
   .params == [6] and .rows == []' "$work/body" >/dev/null ||
   fail "SQL, bound parameters, or database result"

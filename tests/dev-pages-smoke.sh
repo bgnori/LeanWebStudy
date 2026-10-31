@@ -56,6 +56,18 @@ check_status() {
   actual="$(curl --path-as-is -sS --max-time 30 -D "$work/headers" \
     -o "$work/body" -w '%{http_code}' "$base$path")"
   [[ "$actual" == "$expected" ]] || fail "Expected HTTP $expected for $path, got $actual"
+  local content_type count
+  if [[ "$expected" != 200 ]]; then
+    content_type='text/plain; charset=utf-8'
+  elif [[ "$path" == "/api/query" ]]; then
+    content_type='application/json; charset=utf-8'
+  else
+    content_type='text/html; charset=utf-8'
+  fi
+  count="$(grep -ic '^content-type:' "$work/headers" || true)"
+  [[ "$count" == 1 ]] || fail "Expected exactly one Content-Type header, got $count"
+  tr -d '\r' <"$work/headers" | grep -Fxi "content-type: $content_type" >/dev/null ||
+    fail "Expected Content-Type: $content_type for $path"
   kill -0 "$server_pid" 2>/dev/null || fail "Server exited"
 }
 
@@ -77,7 +89,6 @@ check_status 200 "/"
 grep -q 'original 1 /' "$work/body" || fail "Initial page or context"
 grep -q '<li>1: Alice</li>' "$work/body" || fail "Shared database context"
 grep -qi '^cache-control: no-store' "$work/headers" || fail "Page cache policy"
-grep -qi '^content-type: text/html' "$work/headers" || fail "Page content type"
 write_page "$work/pages/index.lean" "edited"
 check_status 200 "/?ignored=value"
 grep -q 'edited 2 /' "$work/body" || fail "Edited source not reloaded"
