@@ -10,8 +10,6 @@ def main : IO Unit :=
         "<p>MapleSQLでSQL文とパラメーターを生成し、SQLiteで実行します。" ++
         "値をSQL文に埋め込まず、安全に受け渡します。</p>" ++
         "<h2>SQLiteのユーザー</h2>" ++ context.usersHtml ++
-        "<h2>パラメーター付きクエリ</h2>" ++
-        "<p>ユーザーIDをパラメーターとしてMapleSQLでクエリを組み立て、" ++
-        "SQLiteで実行する例です。</p>" ++
-        "<p><a href=\"/api/query\">クエリを実行してJSON結果を見る</a></p>" ++
+        "<p><a href=\"/sqlite/users\">ユーザー一覧のサンプル</a></p>" ++
+        context.sqliteDemoHtml ++
         "</body></html>")

@@ -6,7 +6,20 @@ structure Context where
   requestId : Nat
   path : String
   usersHtml : String
-  deriving Lean.ToJson, Lean.FromJson
+  sqliteDemoHtml : String := ""
+  deriving Lean.ToJson
+
+instance : Lean.FromJson Context where
+  fromJson? json := do
+    let fields <- json.getObj?
+    let sqliteDemoHtml <- match fields.get? "sqliteDemoHtml" with
+      | some value => value.getStr?
+      | none => pure ""
+    return {
+      requestId := ← json.getObjValAs? Nat "requestId"
+      path := ← json.getObjValAs? String "path"
+      usersHtml := ← json.getObjValAs? String "usersHtml"
+      sqliteDemoHtml }
 
 def escapeHtml (text : String) : String :=
   text.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"

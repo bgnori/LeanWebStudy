@@ -13,9 +13,12 @@ namespace LeanWebStudy
 
 open Std.Http
 
+def sampleStatement (minimumId : Nat) : MapleSQL.Statement :=
+  .select #[.all] "users"
+    (some (.greaterThan (.column "id") (.parameter (.integer (Int.ofNat minimumId)))))
+
 def sampleQuery (requestId : Nat) : Except String MapleSQL.Formatted :=
-  MapleSQL.render (.select #[.all] "users"
-    (some (.greaterThan (.column "id") (.parameter (.integer (Int.ofNat requestId))))))
+  MapleSQL.render (sampleStatement requestId)
 
 def valueJson : MapleSQL.Value -> Lean.Json
   | .text value => Lean.toJson value
@@ -42,9 +45,65 @@ def escapeHtml := Page.escapeHtml
 def usersHtml (rows : Array (Array MapleSQL.Value)) : IO String := do
   let items <- rows.mapM fun row =>
     match row.toList with
-    | [.integer id, .text name] => pure s!"<li>{id}: {escapeHtml name}</li>"
+    | [.integer id, .text name, .text email] =>
+      pure s!"<li>{id}: {escapeHtml name} <span>({escapeHtml email})</span></li>"
     | _ => throw (IO.userError "Unexpected users query result")
   return "<ul>" ++ String.join items.toList ++ "</ul>"
+
+private def codeHtml (text : String) : String :=
+  "<pre><code>" ++ escapeHtml text ++ "</code></pre>"
+
+def sqliteDemoHtml (query : MapleSQL.Formatted)
+    (rows : Array (Array MapleSQL.Value)) (emailQuery : MapleSQL.Formatted)
+    (emails : Array (Array MapleSQL.Value)) : IO String := do
+  let insert <- renderQuery SampleData.insertStatement
+  return ("<h2>ダミーデータの出典と利用条件</h2>" ++
+      s!"<p><a href=\"{SampleData.sourceUrl}\">JSONPlaceholder users（固定コミット）</a>の" ++
+      s!"<a href=\"{SampleData.generatorUrl}\">Fakerで生成された架空データ</a>から、" ++
+      "idとnameの10件を基に、ID 2の名前をID 1と同名に変更しました。" ++
+      "実在人物を示すデータではありません。emailは元データを使わず、" ++
+      "user-{id}@example.invalidを生成しました。予約された.invalidドメインのため" ++
+      "実在する送信先には使えません。電話・住所・Webサイト・画像は取り込まず、" ++
+      "メール送信や外部通信もしません。</p>" ++
+      s!"<p><a href=\"{SampleData.licenseUrl}\">MIT License</a> / " ++
+      "Copyright (c) 2013 typicode。ライセンス全文はリポジトリに同梱しています。</p>" ++
+      "<h2>元データのスキーマ</h2>" ++
+      "<p>元JSONのusers配列の構造（型の説明であり、JSON Schemaではありません）。" ++
+      "他の配列は使用しません。geoの緯度・経度も元データでは文字列です。</p>" ++
+      codeHtml SampleData.sourceSchema ++
+      "<h2>SQLiteに取り込むスキーマ</h2>" ++
+      "<p>users[].id → users.id、users[].name → users.name（ID 2のみ同名に変更）。" ++
+      "emailはIDから生成します。nameは重複可能、emailはUNIQUEです。" ++
+      "残りのフィールドは破棄します。起動時に:memory:へ取り込み、終了時に消えます。</p>" ++
+      codeHtml SampleData.sqliteSchema ++
+      "<h2>1. MapleSQLでINSERTを生成</h2>" ++
+      "<p>Statement.insertにテーブル名、列名、行の配列を渡します。" ++
+      "MapleSQLは識別子を引用し、値をSQLとは別のparams配列に分離します。</p>" ++
+      codeHtml (reprStr SampleData.insertStatement) ++
+      codeHtml insert.sql ++
+      codeHtml (Lean.Json.arr (insert.params.map valueJson)).compress ++
+      "<h2>2. MapleSQLでSELECTを生成</h2>" ++
+      "<p>このページの例は常にid &gt; 3です（リクエスト番号とは独立）。" ++
+      "以下は実際にrenderしたStatement、生成SQL、paramsです。</p>" ++
+      codeHtml (reprStr (sampleStatement 3)) ++
+      codeHtml query.sql ++
+      codeHtml (Lean.Json.arr (query.params.map valueJson)).compress ++
+      "<h2>3. SQLiteで実行した結果</h2>" ++
+      "<p>SQLiteがSQLをprepareし、?へ整数・文字列をbindして実行します。" ++
+      "MapleSQL自体はDB接続・実行・スキーマ検証を行いません。" ++
+      "結果は[id, name, email]の配列で、表示時にHTMLエスケープします。</p>" ++
+      codeHtml (rowsJson rows).compress ++
+      "<h2>4. 同名の2人のemailだけをSELECT</h2>" ++
+      "<p>名前がLeanne Grahamの行をWHEREで絞り込み、SelectItem.namedで" ++
+      "email列だけを取得します。名前は一意ではないので2件返ります。" ++
+      "名前もSQLに埋め込まず、文字列パラメーターとして渡します。</p>" ++
+      codeHtml (reprStr (SampleData.emailsByNameStatement SampleData.duplicateName)) ++
+      codeHtml emailQuery.sql ++
+      codeHtml (Lean.Json.arr (emailQuery.params.map valueJson)).compress ++
+      "<h3>実行結果（各行は[email]）</h3>" ++
+      codeHtml (rowsJson emails).compress ++
+      "<p><a href=\"/api/query\">APIのSQL・params・結果を見る</a>。" ++
+      "APIはリクエスト番号をid &gt; ?の値に使うため、10以降は空配列になります。</p>")
 
 def WebHandler.execute (self : WebHandler) (query : MapleSQL.Formatted) :
     IO (Array (Array MapleSQL.Value)) :=
@@ -61,7 +120,11 @@ def WebHandler.pageContext (self : WebHandler) (path : String) : IO Page.Context
   let requestId <- self.nextRequestId
   let query <- renderQuery (.select #[.all] "users" none)
   let users <- usersHtml (← self.execute query)
-  return { requestId, path, usersHtml := users }
+  let demoQuery <- renderQuery (sampleStatement 3)
+  let emailQuery <- renderQuery (SampleData.emailsByNameStatement SampleData.duplicateName)
+  let demo <- sqliteDemoHtml demoQuery (← self.execute demoQuery)
+    emailQuery (← self.execute emailQuery)
+  return { requestId, path, usersHtml := users, sqliteDemoHtml := demo }
 
 def WebHandler.servePage (self : WebHandler) (path : String) : IO Lithe.Response := do
   try

@@ -1,4 +1,5 @@
 import MapleSQL
+import LeanWebStudy.SampleData
 
 namespace LeanWebStudy
 
@@ -32,13 +33,9 @@ def renderQuery (statement : MapleSQL.Statement) : IO MapleSQL.Formatted :=
 def Database.seededMemory : IO Database := do
   let db <- Database.openMemory
   discard <| db.execute {
-    sql := "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+    sql := SampleData.sqliteSchema
     params := #[] }
-  let insert <- renderQuery (.insert "users" #["id", "name"] #[
-    #[.integer 1, .text "Alice"],
-    #[.integer 2, .text "Bob"],
-    #[.integer 3, .text "Carol"],
-    #[.integer 4, .text "Dave"]])
+  let insert <- renderQuery SampleData.insertStatement
   discard <| db.execute insert
   return db
 

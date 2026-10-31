@@ -99,7 +99,10 @@ source reloading in isolated processes, **not** native hot replacement within
 the server's Lean runtime.
 
 The server sends a JSON context on stdin containing `requestId`, the URL `path`,
-and HTML-escaped `usersHtml` queried from its existing SQLite connection.
+HTML-escaped `usersHtml`, and `sqliteDemoHtml` (source attribution, source/SQLite
+schemas, MapleSQL statements, generated SQL, separate parameters, and actual
+query results) queried/rendered using its existing SQLite connection.
+`sqliteDemoHtml` defaults to an empty string for older context producers.
 `Page.run` returns the HTML as a JSON string on stdout; use stderr for page
 diagnostics. The counter and database remain in the server and survive page
 changes and worker failures. Workers do not inherit the live database handle;
@@ -149,10 +152,68 @@ checks during a slow page request, all without restarting its server.
 ## SQLite backend
 
 At startup, the server opens one SQLite `:memory:` connection, creates the
-`users` table, and inserts Alice, Bob, Carol, and Dave (IDs 1 through 4).
+`users` table, and inserts ten synthetic users (IDs 1 through 10).
 All requests share that connection: data lasts until the process exits and is
 recreated on restart. No database file is written. Connection setup or seeding
 failures stop startup rather than running without a working database.
+
+### Dummy data provenance and schemas
+
+The fixture in [SampleData.lean](LeanWebStudy/SampleData.lean) adapts the `id`/`name`
+projection of `users` from [JSONPlaceholder's data.json](https://github.com/typicode/jsonplaceholder/blob/7ae4432ac3f60e7226a899c25e04826207d07098/data.json),
+pinned to commit `7ae4432ac3f60e7226a899c25e04826207d07098`.
+Its [seed.js](https://github.com/typicode/jsonplaceholder/blob/7ae4432ac3f60e7226a899c25e04826207d07098/seed.js)
+uses Faker to generate fictional users, not a real customer dataset.
+JSONPlaceholder is MIT-licensed; the copyright notice and full license are
+preserved in [data/LICENSE-jsonplaceholder](data/LICENSE-jsonplaceholder).
+Use, modification, redistribution, and commercial use are permitted subject to
+the MIT notice requirement; there is no warranty. Fictional names may
+coincidentally match real people and must not be treated as verified identities.
+
+ID 2's name is changed to `Leanne Graham`, matching ID 1, to demonstrate a
+non-unique name lookup. Each row gets a locally generated email
+`user-{id}@example.invalid`; `.invalid` is a reserved non-resolving domain
+([RFC 2606](https://www.rfc-editor.org/rfc/rfc2606.html)).
+Source email addresses are discarded, not reused. Phone numbers, postal
+addresses, websites, companies, and images are not imported or contacted.
+Email addresses are displayed as escaped text, not mailto links; no email is sent.
+The fixture is compiled locally: neither startup nor page rendering
+downloads data or executes external source code.
+To reproduce the adapted fixture without downloading unrelated records to disk:
+
+```sh
+curl --fail --silent --show-error \
+  https://raw.githubusercontent.com/typicode/jsonplaceholder/7ae4432ac3f60e7226a899c25e04826207d07098/data.json |
+  jq '.users | map({id, name: (if .id == 2 then "Leanne Graham" else .name end),
+    email: ("user-" + (.id | tostring) + "@example.invalid")})'
+```
+
+Both `/sqlite/` and `/sqlite/users` display the original users object structure
+(including nested address/company fields and their types) and the actual DDL:
+
+```sql
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE)
+```
+
+The mapping is `users[].id → users.id` and `users[].name → users.name` (except ID 2).
+`email` is generated from the ID; all other source fields are discarded.
+Names may repeat; IDs and emails are unique. Pages show the actual MapleSQL INSERT/SELECT
+statements, generated SQL, bound parameters, and executed SELECT results.
+The page demo always selects `id > 3`, so it continues to show seven results
+regardless of the request counter. MapleSQL constructs SQL and parameters; the
+SQLite bridge handles execution. MapleSQL does not validate the database schema.
+
+The second SELECT example uses `SelectItem.named "email"` and a bound name:
+
+```sql
+SELECT "email" FROM "users" WHERE "name" = ?
+```
+
+With `params = ["Leanne Graham"]`, the actual result is
+`[["user-1@example.invalid"], ["user-2@example.invalid"]]`: exactly two rows,
+each containing only the email column. Both SQLite pages display the statement,
+generated SQL, parameters, and executed result. The name is never interpolated
+into SQL.
 
 The native bridge links against the system SQLite library. It prepares one
 statement at a time, binds MapleSQL parameters with `sqlite3_bind_int64` or
@@ -163,15 +224,15 @@ SQLite's signed 64-bit range are rejected. Result cells currently support
 The connection is closed when its Lean-managed handle is released.
 
 The SQL endpoint uses the current request counter as the `id > ?` parameter
-and includes `rows` as arrays of column values (`id`, `name`). For example,
-request ID 3 returns:
+and includes `rows` as arrays of column values (`id`, `name`, `email`). For example,
+request ID 9 returns:
 
 ```json
-{"requestId":3,"sql":"SELECT * FROM \"users\" WHERE \"id\" > ?","params":[3],"rows":[[4,"Dave"]]}
+{"requestId":9,"sql":"SELECT * FROM \"users\" WHERE \"id\" > ?","params":[9],"rows":[[10,"Clementina DuBuque","user-10@example.invalid"]]}
 ```
 
-From request ID 4 onward, this endpoint returns empty rows; the top page always reads
-and displays all four seeded users, with names HTML-escaped.
+From request ID 10 onward, this endpoint returns empty rows; both SQLite pages
+always query and display all ten seeded users, with names HTML-escaped.
 
 ```sh
 curl -i http://127.0.0.1:8080/

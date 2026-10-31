@@ -87,7 +87,8 @@ done
 
 check_status 200 "/"
 grep -q 'original 1 /' "$work/body" || fail "Initial page or context"
-grep -q '<li>1: Alice</li>' "$work/body" || fail "Shared database context"
+grep -q '<li>1: Leanne Graham <span>(user-1@example.invalid)</span></li>' "$work/body" ||
+  fail "Shared database context"
 grep -qi '^cache-control: no-store' "$work/headers" || fail "Page cache policy"
 write_page "$work/pages/index.lean" "edited"
 check_status 200 "/?ignored=value"
@@ -123,7 +124,8 @@ write_page "$work/pages/index.lean" "recovered"
 check_status 200 "/"
 grep -q 'recovered 8 /' "$work/body" || fail "Recovery or counter persistence"
 check_status 200 "/api/query"
-jq -e '.requestId == 9 and .rows == []' "$work/body" >/dev/null || fail "API state"
+jq -e '.requestId == 9 and .rows == [[10,"Clementina DuBuque","user-10@example.invalid"]]' \
+  "$work/body" >/dev/null || fail "API state"
 write_page "$work/pages/blog/index.lean" "folder index"
 check_status 200 "/blog/"
 grep -q 'folder index 10 /blog/' "$work/body" || fail "Trailing-slash directory index"
