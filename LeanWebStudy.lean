@@ -136,6 +136,69 @@ def WebHandler.boardPosts (self : WebHandler) : IO (Array Page.BoardPost) := do
       pure { id, author, message }
     | _ => throw (IO.userError "Unexpected bulletin board query result")
 
+def WebHandler.wikiArticles (self : WebHandler) : IO (Array Page.WikiArticle) := do
+  let query <- renderQuery (.select #[.all] "wiki_articles" none)
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.text slug, .text title, .text content] =>
+      pure { slug, title, content }
+    | _ => throw (IO.userError "Unexpected wiki article query result")
+
+def WebHandler.wikiArticleExists (self : WebHandler) (slug : String) : IO Bool := do
+  let query <- renderQuery (.select #[.named "slug"] "wiki_articles"
+    (some (.equal (.column "slug") (.parameter (.text slug)))))
+  return !(← self.execute query).isEmpty
+
+def WebHandler.formField (params : Std.HashMap String (Array String))
+    (name : String) : Option String := do
+  let values ← params.get? name
+  if values.size == 1 then values[0]? else none
+
+def WebHandler.validWikiSlug (slug : String) : Bool :=
+  !slug.isEmpty && slug.length <= 48 && !slug.startsWith "-" && !slug.endsWith "-" &&
+    slug.toList.all fun char =>
+      (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-'
+
+def WebHandler.performWikiOperation (self : WebHandler) (operation slug title content : String) :
+    IO Lithe.Response := do
+  try
+    let articleExists ← self.wikiArticleExists slug
+    match operation with
+    | "create" =>
+      if articleExists then
+        pure (Lithe.Response.text "An article with this slug already exists\n" |>.withStatus 409)
+      else
+        let insert ← renderQuery (.insert "wiki_articles" #["slug", "title", "content"]
+          #[#[.text slug, .text title, .text content]])
+        let _ ← self.execute insert
+        pure (Lithe.Response.empty 303 |>.setHeader "Location" s!"/wiki/{slug}")
+    | "save" =>
+      if !articleExists then
+        pure (Lithe.Response.text "Article not found\n" |>.withStatus 404)
+      else
+        let update ← renderQuery (.update "wiki_articles"
+          #[("title", .parameter (.text title)),
+            ("content", .parameter (.text content))]
+          (some (.equal (.column "slug") (.parameter (.text slug)))))
+        let _ ← self.execute update
+        pure (Lithe.Response.empty 303 |>.setHeader "Location" s!"/wiki/{slug}")
+    | "delete" =>
+      if !articleExists then
+        pure (Lithe.Response.text "Article not found\n" |>.withStatus 404)
+      else
+        let delete ← renderQuery (.delete "wiki_articles"
+          (some (.equal (.column "slug") (.parameter (.text slug)))))
+        let _ ← self.execute delete
+        pure (Lithe.Response.empty 303 |>.setHeader "Location" "/wiki/")
+    | _ => throw (IO.userError s!"Unknown wiki operation: {operation}")
+  catch error =>
+    if (error.toString.splitOn "UNIQUE constraint failed: wiki_articles.slug").length > 1 then
+      pure (Lithe.Response.text "An article with this slug already exists\n" |>.withStatus 409)
+    else
+      IO.eprintln s!"Wiki {operation} failed: {error}"
+      pure (Lithe.Response.text "Wiki article could not be saved\n" |>.withStatus 500)
+
 def WebHandler.insertBoardPost (self : WebHandler) (author message : String) :
     IO (Except String Unit) := do
   try
@@ -148,15 +211,29 @@ def WebHandler.insertBoardPost (self : WebHandler) (author message : String) :
 
 def WebHandler.servePage (self : WebHandler) (path : String) : IO Lithe.Response := do
   try
-    let some source <- self.pages.find path |
+    let wikiPath := path == "/wiki" || path.startsWith "/wiki/"
+    let wikiSegments := (path.splitOn "/").drop 2
+    let wikiSegments := if wikiSegments.getLast? == some "" then wikiSegments.dropLast
+      else wikiSegments
+    let some source <- self.pages.find (if wikiPath then "/wiki/" else path) |
       return ((Lithe.Response.text "Not found\n").withStatus 404)
         |>.setHeader "Cache-Control" "no-store"
-    let context <- self.pageContext path
-    let context ←
-      if path == "/board" || path == "/board/" then
-        pure { context with boardPosts := (← self.boardPosts).reverse }
-      else
-        pure context
+    let mut context <- self.pageContext path
+    if wikiPath then
+      let articles ← self.wikiArticles
+      let knownArticle slug := articles.any fun article => article.slug == slug
+      let validWikiPage := match wikiSegments with
+        | [] => true
+        | ["new"] => true
+        | ["edit", slug] => knownArticle slug
+        | [slug] => knownArticle slug
+        | _ => false
+      unless validWikiPage do
+        return ((Lithe.Response.text "Not found\n").withStatus 404)
+          |>.setHeader "Cache-Control" "no-store"
+      context := { context with wikiArticles := articles }
+    if path == "/board" || path == "/board/" then
+      context := { context with boardPosts := (← self.boardPosts).reverse }
     let html <- DevPages.render source context
     return (Lithe.Response.html html).setHeader "Cache-Control" "no-store"
   catch error =>
@@ -189,6 +266,34 @@ def WebHandler.boardPostRoute (self : WebHandler) : Lithe.Handler := fun context
   | .error error =>
     IO.eprintln s!"Bulletin board POST failed: {error}"
     pure (Lithe.Response.text "Post could not be saved\n" |>.withStatus 500)
+
+def WebHandler.wikiPostRoute (self : WebHandler) (operation : String) : Lithe.Handler :=
+  fun context => do
+    let params ← Lithe.Form.params (limit := some 131072) context
+    let some slug := WebHandler.formField params "slug" |
+      throw (Lithe.HttpError.badRequest "missing or repeated form field 'slug'")
+    if !WebHandler.validWikiSlug slug then
+      throw (Lithe.HttpError.badRequest "slug must use lowercase letters, numbers, and hyphens")
+    let title ← do
+      if operation == "delete" then
+        pure ""
+      else
+        match WebHandler.formField params "title" with
+        | some title => pure title.trimAscii.toString
+        | none => throw (Lithe.HttpError.badRequest "missing or repeated form field 'title'")
+    let content ← do
+      if operation == "delete" then
+        pure ""
+      else
+        match WebHandler.formField params "content" with
+        | some content => pure content
+        | none => throw (Lithe.HttpError.badRequest "missing or repeated form field 'content'")
+    if operation != "delete" then
+      if title.isEmpty || title.length > 120 then
+        throw (Lithe.HttpError.badRequest "title must contain 1 to 120 characters")
+      if content.trimAscii.toString.isEmpty || content.length > 10000 then
+        throw (Lithe.HttpError.badRequest "content must contain 1 to 10000 characters")
+    self.performWikiOperation operation slug title content
 
 def WebHandler.fallback (self : WebHandler) : Lithe.Handler := fun context => do
   if context.req.method != .GET then
@@ -233,6 +338,9 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
     |>.get "/api/query" (self.queryRoute)
     |>.get "/board/" (self.boardGetRoute)
     |>.post "/board/" (self.boardPostRoute)
+    |>.post "/wiki/create" (self.wikiPostRoute "create")
+    |>.post "/wiki/save" (self.wikiPostRoute "save")
+    |>.post "/wiki/delete" (self.wikiPostRoute "delete")
     |>.withFallback (self.fallback)
 
 def WebHandler.create

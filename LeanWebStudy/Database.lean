@@ -38,6 +38,16 @@ def Database.seededMemory : IO Database := do
   discard <| db.execute {
     sql := "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, message TEXT NOT NULL)"
     params := #[] }
+  discard <| db.execute {
+    sql := "CREATE TABLE wiki_articles (slug TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL)"
+    params := #[] }
+  let wikiSeed := #[
+    #["welcome", "Wikiへようこそ", "このWikiはLean 4、lean-html、Lithe、MapleSQL、SQLiteで作られています。\n\n記事の新規作成・編集・削除を試せます。"],
+    #["lean-basics", "Lean 4の基本", "Leanは定理証明支援系であり、関数型プログラミング言語でもあります。\n\nこのサンプルのページとサーバーはLeanで実装されています。"],
+    #["sqlite-basics", "SQLiteの基本", "SQLiteはアプリケーションに組み込める軽量なリレーショナルデータベースです。\n\nこのWikiでは記事をSQLiteに保存し、MapleSQLでSQLとパラメーターを分けて操作します。"]]
+  let wikiInsert <- renderQuery (.insert "wiki_articles" #["slug", "title", "content"]
+    (wikiSeed.map fun row => row.map MapleSQL.Value.text))
+  discard <| db.execute wikiInsert
   let insert <- renderQuery SampleData.insertStatement
   discard <| db.execute insert
   return db

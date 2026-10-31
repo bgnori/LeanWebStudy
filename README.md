@@ -42,6 +42,9 @@ Stop it with Ctrl+C.
 | `GET /templates/lean-html` | lean-html template example |
 | `GET /board/` | SQLite-backed bulletin board page |
 | `POST /board/` | Validate and store a bulletin board post |
+| `GET /wiki/`, `/wiki/{slug}` | SQLite-backed wiki index and article |
+| `GET /wiki/new`, `/wiki/edit/{slug}` | Wiki article editor |
+| `POST /wiki/create`, `/wiki/save`, `/wiki/delete` | Create, update, and delete wiki articles |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
 
@@ -127,6 +130,7 @@ Pages are loaded from the `Pages/` directory by default. Each feature has an
 - `/sqlite/` and `/sqlite/users` (MapleSQL and SQLite)
 - `/templates/` and `/templates/lean-html`
 - `/board/` (SQLite-backed bulletin board)
+- `/wiki/` and `/wiki/{slug}` (SQLite-backed wiki)
 
 For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs
 `Pages/blog/new.lean`. Both `/blog` and `/blog/` open the directory index.
@@ -171,9 +175,9 @@ for the update boundaries, verified behavior, and troubleshooting steps.
 The server sends a JSON context on stdin containing `requestId`, the URL `path`,
 HTML-escaped `usersHtml`, `sqliteDemoHtml` (source attribution, source/SQLite
 schemas, MapleSQL statements, generated SQL, separate parameters, and actual
-query results) queried/rendered using its existing SQLite connection, and
-`boardPosts` for the bulletin board. Optional context fields default for older
-context producers.
+query results) queried/rendered using its existing SQLite connection,
+`boardPosts` for the bulletin board, and `wikiArticles` for the Wiki.
+Optional context fields default for older context producers.
 `Page.run` returns the HTML as a JSON string on stdout; use stderr for page
 diagnostics. The counter and database remain in the server and survive page
 changes and worker failures. Workers do not inherit the live database handle;
@@ -191,6 +195,21 @@ text escaping. The page uses POST-Redirect-GET; posts are visible to all
 visitors of this server and are cleared when the server restarts. This sample
 accepts names up to 24 characters and messages up to 500 characters, and does
 not include authentication or CSRF protection.
+
+## SQLite Wiki
+
+The sample Wiki at `/wiki/` lists three starter articles and supports reading,
+creating, editing, and deleting articles. It uses the repository's existing Lean
+4 page workers and lean-html DSL; Lithe handles form routes, MapleSQL generates
+parameterized statements, and SQLite stores each article's slug, title, and
+plain-text content. Article text is escaped by lean-html and is not interpreted
+as HTML. Slugs use lowercase ASCII letters, numbers, and hyphens; titles are
+limited to 120 characters and content to 10,000 characters.
+
+Like the bulletin board, Wiki data is stored in the shared in-memory SQLite
+database, is visible to every visitor, and is cleared when the server restarts.
+This is an instructional sample, not a production CMS: it has no authentication,
+authorization, CSRF protection, revision history, or durable storage.
 
 ## HTML templating
 
@@ -232,10 +251,11 @@ checks during a slow page request, all without restarting its server.
 ## SQLite backend
 
 At startup, the server opens one SQLite `:memory:` connection, creates the
-`users` and `posts` tables, and inserts ten synthetic users (IDs 1 through 10).
-All requests share that connection: data lasts until the process exits and is
-recreated on restart. No database file is written. Connection setup or seeding
-failures stop startup rather than running without a working database.
+`users`, `posts`, and `wiki_articles` tables, and inserts ten synthetic users
+(IDs 1 through 10) and three starter Wiki articles. All requests share that
+connection: data lasts until the process exits and is recreated on restart.
+No database file is written. Connection setup or seeding failures stop startup
+rather than running without a working database.
 
 ### Dummy data provenance and schemas
 

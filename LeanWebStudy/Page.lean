@@ -8,12 +8,19 @@ structure BoardPost where
   message : String
   deriving Lean.ToJson, Lean.FromJson, BEq
 
+structure WikiArticle where
+  slug : String
+  title : String
+  content : String
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
 structure Context where
   requestId : Nat
   path : String
   usersHtml : String
   sqliteDemoHtml : String := ""
   boardPosts : Array BoardPost := #[]
+  wikiArticles : Array WikiArticle := #[]
   deriving Lean.ToJson
 
 instance : Lean.FromJson Context where
@@ -25,12 +32,16 @@ instance : Lean.FromJson Context where
     let boardPosts <- match fields.get? "boardPosts" with
       | some value => Lean.fromJson? value
       | none => pure #[]
+    let wikiArticles <- match fields.get? "wikiArticles" with
+      | some value => Lean.fromJson? value
+      | none => pure #[]
     return {
       requestId := ← json.getObjValAs? Nat "requestId"
       path := ← json.getObjValAs? String "path"
       usersHtml := ← json.getObjValAs? String "usersHtml"
       sqliteDemoHtml
-      boardPosts }
+      boardPosts
+      wikiArticles }
 
 def escapeHtml (text : String) : String :=
   text.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"

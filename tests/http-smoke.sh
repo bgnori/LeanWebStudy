@@ -178,4 +178,59 @@ actual="$(curl -sS --max-time 5 -o "$work/body" -w '%{http_code}' \
 check_status 200 "$base/board/"
 grep -q '投稿一覧（1件）' "$work/body" || fail "Invalid post must not be stored"
 
-echo "PASS: bulletin board, SQLite-backed HTML and SQL JSON, health, 404/405, 32 concurrent queries, port validation"
+check_status 200 "$base/wiki/"
+grep -q '知識を、みんなで育てる。' "$work/body" || fail "Wiki landing page"
+grep -q 'Wikiへようこそ' "$work/body" || fail "Seeded wiki articles"
+grep -q 'href="/wiki/new"' "$work/body" || fail "Wiki create link"
+check_status 200 "$base/wiki/welcome"
+grep -q 'このWikiはLean 4、lean-html、Lithe、MapleSQL、SQLiteで作られています。' "$work/body" ||
+  fail "Wiki article detail"
+check_status 404 "$base/wiki/not-a-real-article"
+check_status 200 "$base/wiki/new"
+grep -q 'form action="/wiki/create" method="post"' "$work/body" ||
+  fail "Wiki create form"
+
+actual="$(curl -sS --max-time 5 -D "$work/headers" -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'slug=sample-article' \
+  --data-urlencode 'title=安全な記事' \
+  --data-urlencode 'content=<script>alert(1)</script> & plain text' "$base/wiki/create")"
+[[ "$actual" == 303 ]] || fail "Expected wiki create redirect, got $actual"
+tr -d '\r' <"$work/headers" | grep -Fxi "location: /wiki/sample-article" >/dev/null ||
+  fail "Wiki create must redirect to the new article"
+check_status 200 "$base/wiki/sample-article"
+grep -q '安全な記事' "$work/body" || fail "Created wiki article title"
+grep -qF '&lt;script&gt;alert(1)&lt;/script&gt; &amp; plain text' "$work/body" ||
+  fail "Wiki content must be escaped as plain text"
+if grep -q '<script>alert(1)</script>' "$work/body"; then
+  fail "Wiki content must not render as executable markup"
+fi
+
+check_status 200 "$base/wiki/edit/sample-article"
+grep -q 'form action="/wiki/save" method="post"' "$work/body" ||
+  fail "Wiki edit form"
+actual="$(curl -sS --max-time 5 -D "$work/headers" -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'slug=sample-article' \
+  --data-urlencode 'title=更新した記事' \
+  --data-urlencode 'content=Updated body' "$base/wiki/save")"
+[[ "$actual" == 303 ]] || fail "Expected wiki update redirect, got $actual"
+check_status 200 "$base/wiki/sample-article"
+grep -q '更新した記事' "$work/body" || fail "Wiki article update"
+grep -q 'Updated body' "$work/body" || fail "Wiki article body update"
+
+actual="$(curl -sS --max-time 5 -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'slug=sample-article' --data-urlencode 'title=Duplicate' \
+  --data-urlencode 'content=Duplicate body' "$base/wiki/create")"
+[[ "$actual" == 409 ]] || fail "Duplicate wiki slug must return HTTP 409"
+actual="$(curl -sS --max-time 5 -D "$work/headers" -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'slug=sample-article' "$base/wiki/delete")"
+[[ "$actual" == 303 ]] || fail "Expected wiki delete redirect, got $actual"
+tr -d '\r' <"$work/headers" | grep -Fxi "location: /wiki/" >/dev/null ||
+  fail "Wiki delete must redirect to the article list"
+check_status 404 "$base/wiki/sample-article"
+
+actual="$(curl -sS --max-time 5 -o "$work/body" -w '%{http_code}' \
+  --data-urlencode 'slug=Invalid_Slug' --data-urlencode 'title=Invalid' \
+  --data-urlencode 'content=Invalid body' "$base/wiki/create")"
+[[ "$actual" == 400 ]] || fail "Invalid wiki slug must be rejected"
+
+echo "PASS: bulletin board, SQLite Wiki CRUD and escaping, SQLite HTML and SQL JSON, health, 404/405, concurrent queries, port validation"

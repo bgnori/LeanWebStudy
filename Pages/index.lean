@@ -10,4 +10,5 @@ def main : IO Unit :=
         "<li><a href=\"/sqlite/\">MapleSQLで操作するSQLite</a></li>" ++
         "<li><a href=\"/templates/\">lean-htmlテンプレート</a></li>" ++
         "<li><a href=\"/board/\">掲示板 Webアプリ</a></li>" ++
+        "<li><a href=\"/wiki/\">Wiki Webアプリ</a></li>" ++
         "</ul></body></html>")

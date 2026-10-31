@@ -56,12 +56,13 @@ def expectFailure (action : IO α) (message : String) : IO Unit := do
 def main : IO Unit := do
   let context : Page.Context := {
     requestId := 7, path := "/hello", usersHtml := "<ul></ul>", sqliteDemoHtml := "<pre>demo</pre>",
-    boardPosts := #[{ id := 3, author := "Ada", message := "Hello" }] }
+    boardPosts := #[{ id := 3, author := "Ada", message := "Hello" }],
+    wikiArticles := #[{ slug := "hello", title := "Hello", content := "Wiki text" }] }
   match (Lean.fromJson? (Lean.toJson context) : Except String Page.Context) with
   | .ok decoded =>
     unless decoded.requestId == context.requestId && decoded.path == context.path &&
         decoded.usersHtml == context.usersHtml && decoded.sqliteDemoHtml == context.sqliteDemoHtml &&
-        decoded.boardPosts == context.boardPosts do
+        decoded.boardPosts == context.boardPosts && decoded.wikiArticles == context.wikiArticles do
       throw (IO.userError "Page context must preserve every field through JSON")
   | .error error => throw (IO.userError s!"Page context decoding failed: {error}")
   let legacyContext := Lean.Json.mkObj [
@@ -69,7 +70,8 @@ def main : IO Unit := do
     ("usersHtml", Lean.toJson ("<ul></ul>" : String))]
   match (Lean.fromJson? legacyContext : Except String Page.Context) with
   | .ok decoded =>
-    unless decoded.sqliteDemoHtml.isEmpty && decoded.boardPosts.isEmpty do
+    unless decoded.sqliteDemoHtml.isEmpty && decoded.boardPosts.isEmpty &&
+        decoded.wikiArticles.isEmpty do
       throw (IO.userError "Legacy page context must default optional fields")
   | .error error => throw (IO.userError s!"Legacy page context decoding failed: {error}")
   let invalidContext := Lean.Json.mkObj [
@@ -101,6 +103,9 @@ def main : IO Unit := do
   unless (← db.execute boardSelect) ==
       #[#[.integer 1, .text "Ada", .text "Hello from SQLite"]] do
     throw (IO.userError "MapleSQL post insertion and retrieval must use the shared SQLite database")
+  let wikiSelect <- renderQuery (.select #[.all] "wiki_articles" none)
+  unless (← db.execute wikiSelect).size == 3 do
+    throw (IO.userError "A newly seeded wiki must contain three starter articles")
   for row in SampleData.users do
     match row.toList with
     | [.integer id, .text _, .text email] =>
