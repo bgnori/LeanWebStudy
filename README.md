@@ -53,8 +53,15 @@ lake build
 lake exe leanwebstudy 8080 --dev
 ```
 
-In this opt-in mode, `/` runs [Pages/index.lean](Pages/index.lean).
-`/hello` runs `Pages/hello.lean`, and `/blog/new` runs `Pages/blog/new.lean`.
+In this opt-in mode, `/` runs [Pages/index.lean](Pages/index.lean), which links
+to the individual exercises below it:
+
+- `/sqlite/users` runs [Pages/sqlite/users.lean](Pages/sqlite/users.lean).
+- `/maplesql/parameterized-query` runs
+  [Pages/maplesql/parameterized-query.lean](Pages/maplesql/parameterized-query.lean).
+
+For example, `/hello` runs `Pages/hello.lean`, and `/blog/new` runs
+`Pages/blog/new.lean`.
 The URL path is case-sensitive; segments may contain ASCII letters, digits,
 underscores, and hyphens. Query strings do not affect page selection.
 Missing or deleted pages return 404, including a missing index page.
