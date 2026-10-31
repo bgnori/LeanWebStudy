@@ -54,18 +54,32 @@ check_status() {
 check_status 200 "$base/"
 grep -qi '^content-type: text/html' "$work/headers" || fail "HTML content type"
 grep -qi '^cache-control: no-store' "$work/headers" || fail "Dynamic cache policy"
-grep -q 'Dynamic page request: 1' "$work/body" || fail "First dynamic page"
-grep -q 'Users from SQLite (:memory:)' "$work/body" || fail "SQLite-backed page"
+grep -q 'href="/sqlite/"' "$work/body" || fail "SQLite feature index link"
+grep -q 'href="/maplesql/"' "$work/body" || fail "MapleSQL feature index link"
+grep -q 'href="/templates/"' "$work/body" || fail "Template feature index link"
+if grep -q 'SQLiteのユーザー一覧' "$work/body"; then
+  fail "Root page should be the feature index, not the SQLite example"
+fi
+check_status 200 "$base/?ignored=value"
+grep -q 'LeanWebStudy' "$work/body" || fail "Root index did not reload"
+check_status 200 "$base/sqlite/"
+grep -q 'href="/sqlite/users"' "$work/body" || fail "SQLite feature index"
+check_status 200 "$base/sqlite/users"
+grep -q '1: Alice' "$work/body" || fail "SQLite users example"
 for user in '1: Alice' '2: Bob' '3: Carol' '4: Dave'; do
   grep -q "<li>$user</li>" "$work/body" || fail "Missing database user: $user"
 done
-check_status 200 "$base/?ignored=value"
-grep -q 'Dynamic page request: 2' "$work/body" || fail "Page did not change"
+check_status 200 "$base/maplesql/"
+grep -q 'MapleSQL' "$work/body" || fail "MapleSQL feature index"
+check_status 200 "$base/templates/"
+grep -q 'HTMLテンプレート' "$work/body" || fail "Template feature index"
+check_status 200 "$base/maplesql/parameterized-query"
+grep -q 'パラメーター付きクエリ' "$work/body" || fail "Parameterized query example"
 
 check_status 200 "$base/api/query"
 grep -qi '^content-type: application/json' "$work/headers" || fail "JSON content type"
-jq -e '.requestId == 3 and .sql == "SELECT * FROM \"users\" WHERE \"id\" > ?" and
-  .params == [3] and .rows == [[4, "Dave"]]' "$work/body" >/dev/null ||
+jq -e '.requestId == 8 and .sql == "SELECT * FROM \"users\" WHERE \"id\" > ?" and
+  .params == [8] and .rows == []' "$work/body" >/dev/null ||
   fail "SQL, bound parameters, or database result"
 
 check_status 404 "$base/missing"
@@ -75,7 +89,7 @@ grep -qi '^allow: GET' "$work/headers" || fail "405 Allow header"
 seq 1 32 | xargs -P 8 -I '{}' curl -fsS --max-time 5 "$base/api/query" \
   >"$work/parallel.json"
 jq -se 'length == 32 and
-  ([.[].requestId] | sort) == [range(4; 36)] and
+  ([.[].requestId] | sort) == [range(9; 41)] and
   all(.[]; .params == [.requestId] and .sql == "SELECT * FROM \"users\" WHERE \"id\" > ?" and
     .rows == [])' \
   "$work/parallel.json" >/dev/null || fail "Concurrent request IDs or SQL parameters"

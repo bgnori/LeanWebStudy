@@ -7,7 +7,7 @@ def main : IO Unit :=
         "<title>LeanWebStudy</title></head><body><h1>LeanWebStudy</h1>" ++
         s!"<p>Page request: {context.requestId}</p>" ++
         "<h2>習作</h2><ul>" ++
-        "<li><a href=\"/sqlite/users\">SQLiteのユーザー一覧</a></li>" ++
-        "<li><a href=\"/maplesql/parameterized-query\">MapleSQLのパラメーター付きクエリ</a></li>" ++
-        "<li><a href=\"/templates/lean-html\">lean-htmlのテンプレートサンプル</a></li>" ++
+        "<li><a href=\"/sqlite/\">SQLite</a></li>" ++
+        "<li><a href=\"/maplesql/\">MapleSQL</a></li>" ++
+        "<li><a href=\"/templates/\">lean-htmlテンプレート</a></li>" ++
         "</ul></body></html>")

@@ -11,20 +11,37 @@ def DevPages.open (directory : System.FilePath) : IO DevPages := do
     throw (IO.userError s!"Page directory is not a directory: {directory}")
   return { directory }
 
-def DevPages.relativePath (path : String) : Option System.FilePath := do
-  if path == "/" then return "index.lean"
+def DevPages.routeParts (path : String) : Option (List String) := do
+  if path == "/" then return []
   let parts := path.splitOn "/"
   guard (parts.head? == some "")
   let parts := parts.drop 1
+  let parts := if parts.getLast? == some "" then parts.dropLast else parts
   guard (!parts.isEmpty && parts.all fun part =>
     !part.isEmpty && part.toList.all fun c =>
       (c.toNat < 128 && c.isAlphanum) || c == '_' || c == '-')
+  return parts
+
+def DevPages.relativePath (path : String) : Option System.FilePath := do
+  let parts ← DevPages.routeParts path
+  if parts.isEmpty || (path.splitOn "/").getLast? == some "" then
+    return System.FilePath.mk (String.intercalate "/" parts ++
+      (if parts.isEmpty then "" else "/") ++ "index.lean")
   return System.FilePath.mk (String.intercalate "/" parts ++ ".lean")
 
 def DevPages.find (self : DevPages) (path : String) : IO (Option System.FilePath) := do
   let some relative := DevPages.relativePath path | return none
   let candidate := self.directory / relative
-  unless (← candidate.pathExists) do return none
+  let candidate ←
+    if ← candidate.pathExists then
+      pure candidate
+    else if (path.splitOn "/").getLast? != some "" then
+      let some parts := DevPages.routeParts path | return none
+      let index := self.directory / System.FilePath.mk (String.intercalate "/" parts) /
+        "index.lean"
+      if ← index.pathExists then pure index else return none
+    else
+      return none
   let resolved <- IO.FS.realPath candidate
   unless self.directory.components.isPrefixOf resolved.components do
     throw (IO.userError s!"Page resolves outside page directory: {candidate}")

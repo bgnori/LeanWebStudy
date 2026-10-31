@@ -20,7 +20,8 @@ cleanup() {
   done
   rm -f "$work/pages/index.lean" "$work/pages/hello.lean" \
     "$work/pages/slow.lean" "$work/pages/outside.lean" \
-    "$work/pages/blog/new.lean" "$work/server.log" "$work/body" \
+    "$work/pages/blog/index.lean" "$work/pages/blog/new.lean" \
+    "$work/server.log" "$work/body" \
     "$work/headers" "$work/slow-body" "$work/started" "$work/outside.lean"
   rm -f "$work/template-response"
   rmdir "$work/pages/blog" "$work/pages" "$work"
@@ -92,7 +93,7 @@ check_status 404 "/hello"
 
 printf 'this is not valid Lean\n' >"$work/pages/index.lean"
 check_status 500 "/"
-grep -q '^Development page request failed$' "$work/body" || fail "Generic compile error"
+grep -q '^Page request failed$' "$work/body" || fail "Generic compile error"
 grep -q 'Page worker failed' "$work/server.log" || fail "Missing compiler diagnostics"
 cat >"$work/pages/index.lean" <<'EOF'
 import LeanWebStudy.Page
@@ -112,6 +113,11 @@ check_status 200 "/"
 grep -q 'recovered 8 /' "$work/body" || fail "Recovery or counter persistence"
 check_status 200 "/api/query"
 jq -e '.requestId == 9 and .rows == []' "$work/body" >/dev/null || fail "API state"
+write_page "$work/pages/blog/index.lean" "folder index"
+check_status 200 "/blog/"
+grep -q 'folder index 10 /blog/' "$work/body" || fail "Trailing-slash directory index"
+check_status 200 "/blog"
+grep -q 'folder index 11 /blog' "$work/body" || fail "Directory index fallback"
 status="$(curl -sS --max-time 5 -X POST -D "$work/headers" \
   -o "$work/body" -w '%{http_code}' "$base/")"
 [[ "$status" == 405 ]] || fail "Non-GET request"

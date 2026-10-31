@@ -16,14 +16,13 @@ def main (args : List String) : IO Unit := do
         else throw (IO.userError "Port must be between 1 and 65535")
       | none => throw (IO.userError "Port must be an integer")
     | _ => throw (IO.userError "Usage: leanwebstudy [port] [--dev [page-directory]]")
-  let devPages <- directory.mapM fun directory => LeanWebStudy.DevPages.open directory
+  let pages <- LeanWebStudy.DevPages.open (directory.getD "Pages")
   let counter <- Std.Mutex.new 0
   let database <- Std.Mutex.new (← LeanWebStudy.Database.seededMemory)
   Std.Async.Async.block do
     let server <- Std.Http.Server.serve
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
-      (LeanWebStudy.WebHandler.mk counter database devPages)
+      (LeanWebStudy.WebHandler.mk counter database pages)
     IO.println s!"Listening on http://127.0.0.1:{port}"
-    if let some pages := devPages then
-      IO.println s!"Development pages: {pages.directory} (reloaded per request)"
+    IO.println s!"Pages: {pages.directory} (reloaded per request)"
     server.waitShutdown

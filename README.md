@@ -26,14 +26,21 @@ lake test
 lake exe leanwebstudy
 ```
 
-Visit <http://127.0.0.1:8080>. Refreshing the page changes its request counter.
+Visit <http://127.0.0.1:8080> for the page index. Select a feature to open
+its index and individual examples.
 Use `lake exe leanwebstudy 18080` to select a different port. The server binds
 only to loopback; this is a local development scaffold, not a production deployment.
 Stop it with Ctrl+C.
 
 | Route | Result |
 | --- | --- |
-| `GET /` | HTML generated per request, including users read from SQLite |
+| `GET /` | Index of the feature pages |
+| `GET /sqlite/` | SQLite examples index |
+| `GET /sqlite/users` | SQLite users example |
+| `GET /maplesql/` | MapleSQL examples index |
+| `GET /maplesql/parameterized-query` | Parameterized query example |
+| `GET /templates/` | HTML template examples index |
+| `GET /templates/lean-html` | lean-html template example |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
 
@@ -44,31 +51,30 @@ The shared request counter and database connection are protected by mutexes,
 while the standard HTTP server handles connections asynchronously.
 Dynamic responses disable caching.
 
-## Development page loading
+## Page routing and live reload
 
-To add or edit Lean pages without restarting the server:
+Pages are loaded from the `Pages/` directory by default. Each feature has an
+`index.lean` at its route, with individual examples beneath it:
+
+- `/sqlite/` and `/sqlite/users`
+- `/maplesql/` and `/maplesql/parameterized-query`
+- `/templates/` and `/templates/lean-html`
+
+For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs
+`Pages/blog/new.lean`. Both `/blog` and `/blog/` open the directory index.
+Page sources are reloaded on each request, so edits do not require restarting
+the server.
+
+To use a different page directory:
 
 ```sh
-lake build
-lake exe leanwebstudy 8080 --dev
+lake exe leanwebstudy 8080 --dev /absolute/path/to/pages
 ```
 
-In this opt-in mode, `/` runs [Pages/index.lean](Pages/index.lean), which links
-to the individual exercises below it:
-
-- `/sqlite/users` runs [Pages/sqlite/users.lean](Pages/sqlite/users.lean).
-- `/maplesql/parameterized-query` runs
-  [Pages/maplesql/parameterized-query.lean](Pages/maplesql/parameterized-query.lean).
-- `/templates/lean-html` runs [Pages/templates/lean-html.lean](Pages/templates/lean-html.lean).
-
-For example, `/hello` runs `Pages/hello.lean`, and `/blog/new` runs
-`Pages/blog/new.lean`.
 The URL path is case-sensitive; segments may contain ASCII letters, digits,
 underscores, and hyphens. Query strings do not affect page selection.
-Missing or deleted pages return 404, including a missing index page.
+Missing or deleted pages return 404, including a missing directory index.
 `/health` and `/api/query` remain server-owned; non-GET requests still return 405.
-Use `lake exe leanwebstudy 18080 --dev /absolute/path/to/pages` for another directory.
-Without `--dev`, the original compiled routes and behavior are unchanged.
 
 A page is a Lean source module with a `main` entry point:
 
@@ -98,7 +104,7 @@ other data access must be explicitly added to the server/context interface.
 Use `LeanWebStudy.Page.escapeHtml` for any additional untrusted text.
 Compilation, rendering, and protocol failures produce HTTP 500 and diagnostics
 on server stderr, without exposing compiler output in the HTTP response.
-Development page responses, including errors and missing pages, use `no-store`.
+Page responses, including errors and missing pages, use `no-store`.
 
 ## HTML templating
 

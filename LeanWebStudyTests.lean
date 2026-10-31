@@ -26,11 +26,14 @@ def queryMatches (requestId : Nat) : Bool :=
 
 #guard DevPages.relativePath "/" == some (System.FilePath.mk "index.lean")
 #guard DevPages.relativePath "/hello" == some (System.FilePath.mk "hello.lean")
+#guard DevPages.relativePath "/sqlite/" ==
+  some (System.FilePath.mk "sqlite/index.lean")
 #guard DevPages.relativePath "/blog/new-page_2" ==
   some (System.FilePath.mk "blog/new-page_2.lean")
 #guard DevPages.relativePath "/../Main" == none
 #guard DevPages.relativePath "/%2e%2e/Main" == none
-#guard DevPages.relativePath "/hello/" == none
+#guard DevPages.relativePath "/hello/" ==
+  some (System.FilePath.mk "hello/index.lean")
 #guard DevPages.relativePath "//hello" == none
 #guard DevPages.relativePath "/hello\\world" == none
 #guard DevPages.relativePath "hello" == none
