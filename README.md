@@ -3,6 +3,9 @@
 A separate Lean 4 application that consumes [MapleSQL](https://github.com/bgnori/MapleSQL)
 and serves dynamically generated web content backed by SQLite.
 
+For definitions and classifications of project, web, and Lean terminology, see the
+[project glossary (Japanese)](docs/glossary.md).
+
 ## Requirements
 
 - VS Code with the **Lean 4** extension.
