@@ -14,6 +14,47 @@ structure WikiArticle where
   content : String
   deriving Lean.ToJson, Lean.FromJson, BEq
 
+structure ShopProduct where
+  slug : String
+  name : String
+  category : String
+  price : Int
+  art : String
+  kind : String
+  badge : String
+  description : String
+  details : String
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
+structure ShopCartItem where
+  product : ShopProduct
+  quantity : Nat
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
+structure ShopInventoryItem where
+  product : ShopProduct
+  stock : Nat
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
+structure ShopOrderItem where
+  productSlug : String
+  productName : String
+  quantity : Nat
+  unitPrice : Int
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
+structure ShopOrder where
+  id : Int
+  customerName : String
+  postalCode : String
+  address : String
+  phone : String
+  total : Int
+  paymentStatus : String
+  fulfillmentStatus : String
+  items : Array ShopOrderItem
+  deriving Lean.ToJson, Lean.FromJson, BEq
+
 structure Context where
   requestId : Nat
   path : String
@@ -21,6 +62,11 @@ structure Context where
   sqliteDemoHtml : String := ""
   boardPosts : Array BoardPost := #[]
   wikiArticles : Array WikiArticle := #[]
+  shopProducts : Array ShopProduct := #[]
+  shopCart : Array ShopCartItem := #[]
+  shopLatestOrderId : Option Int := none
+  shopInventory : Array ShopInventoryItem := #[]
+  shopOrders : Array ShopOrder := #[]
   chatPort : Nat := 0
   deriving Lean.ToJson
 
@@ -36,6 +82,21 @@ instance : Lean.FromJson Context where
     let wikiArticles <- match fields.get? "wikiArticles" with
       | some value => Lean.fromJson? value
       | none => pure #[]
+    let shopProducts <- match fields.get? "shopProducts" with
+      | some value => Lean.fromJson? value
+      | none => pure #[]
+    let shopCart <- match fields.get? "shopCart" with
+      | some value => Lean.fromJson? value
+      | none => pure #[]
+    let shopLatestOrderId <- match fields.get? "shopLatestOrderId" with
+      | some value => Lean.fromJson? value
+      | none => pure none
+    let shopInventory <- match fields.get? "shopInventory" with
+      | some value => Lean.fromJson? value
+      | none => pure #[]
+    let shopOrders <- match fields.get? "shopOrders" with
+      | some value => Lean.fromJson? value
+      | none => pure #[]
     let chatPort <- match fields.get? "chatPort" with
       | some value => do
         let port ← value.getNat?
@@ -49,6 +110,11 @@ instance : Lean.FromJson Context where
       sqliteDemoHtml
       boardPosts
       wikiArticles
+      shopProducts
+      shopCart
+      shopLatestOrderId
+      shopInventory
+      shopOrders
       chatPort }
 
 def escapeHtml (text : String) : String :=

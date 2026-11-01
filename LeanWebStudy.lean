@@ -6,6 +6,8 @@ import LeanWebStudy.Chat
 import LeanWebStudy.Pong
 import LeanWebStudy.SSEChat
 import LeanWebStudy.OrderBook
+import LeanWebStudy.Shop
+import LeanWebStudy.ShopAdmin
 import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch
@@ -155,6 +157,80 @@ def WebHandler.wikiArticles (self : WebHandler) : IO (Array Page.WikiArticle) :=
       pure { slug, title, content }
     | _ => throw (IO.userError "Unexpected wiki article query result")
 
+def WebHandler.shopProducts (self : WebHandler) : IO (Array Page.ShopProduct) := do
+  let query <- renderQuery (.select #[.all] "shop_products" none)
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.text slug, .text name, .text category, .integer price, .text art,
+        .text kind, .text badge, .text description, .text details] =>
+      pure { slug, name, category, price, art, kind, badge, description, details }
+    | _ => throw (IO.userError "Unexpected shop product query result")
+
+def WebHandler.shopCart (self : WebHandler)
+    (products : Array Page.ShopProduct) : IO (Array Page.ShopCartItem) := do
+  let query <- renderQuery (.select #[.all] "shop_cart_items" none)
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.text slug, .integer quantity] =>
+      match products.find? (fun product => product.slug == slug), quantity.toNat? with
+      | some product, some quantity => pure { product, quantity }
+      | none, _ => throw (IO.userError s!"Cart references unknown product: {slug}")
+      | _, none => throw (IO.userError "Cart quantity must be non-negative")
+    | _ => throw (IO.userError "Unexpected shop cart query result")
+
+def WebHandler.shopLatestOrderId (self : WebHandler) : IO (Option Int) := do
+  let rows <- self.execute {
+    sql := "SELECT id FROM shop_orders ORDER BY id DESC LIMIT 1"
+    params := #[] }
+  match rows.toList with
+  | [] => pure none
+  | [#[.integer id]] => pure (some id)
+  | _ => throw (IO.userError "Unexpected latest shop order query result")
+
+def WebHandler.shopInventory (self : WebHandler)
+    (products : Array Page.ShopProduct) : IO (Array Page.ShopInventoryItem) := do
+  let query <- renderQuery (.select #[.all] "shop_inventory" none)
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.text slug, .integer stock] =>
+      match products.find? (fun product => product.slug == slug), stock.toNat? with
+      | some product, some stock => pure { product, stock }
+      | none, _ => throw (IO.userError s!"Inventory references unknown product: {slug}")
+      | _, none => throw (IO.userError "Inventory stock must be non-negative")
+    | _ => throw (IO.userError "Unexpected shop inventory query result")
+
+def WebHandler.shopOrderItems (self : WebHandler) (orderId : Int)
+    (products : Array Page.ShopProduct) : IO (Array Page.ShopOrderItem) := do
+  let query <- renderQuery (.select #[.all] "shop_order_items"
+    (some (.equal (.column "order_id") (.parameter (.integer orderId)))))
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.integer _, .text slug, .integer quantity, .integer unitPrice] =>
+      match products.find? (fun product => product.slug == slug), quantity.toNat? with
+      | some product, some quantity =>
+        pure { productSlug := slug, productName := product.name, quantity, unitPrice }
+      | none, _ => throw (IO.userError s!"Order references unknown product: {slug}")
+      | _, none => throw (IO.userError "Order quantity must be non-negative")
+    | _ => throw (IO.userError "Unexpected shop order item query result")
+
+def WebHandler.shopOrders (self : WebHandler)
+    (products : Array Page.ShopProduct) : IO (Array Page.ShopOrder) := do
+  let query <- renderQuery (.select #[.all] "shop_orders" none)
+  let rows <- self.execute query
+  rows.mapM fun row =>
+    match row.toList with
+    | [.integer id, .text customerName, .text postalCode, .text address,
+        .text phone, .integer total, .text paymentStatus, .text fulfillmentStatus] => do
+      let items ← self.shopOrderItems id products
+      pure {
+        id, customerName, postalCode, address, phone, total, paymentStatus,
+        fulfillmentStatus, items }
+    | _ => throw (IO.userError "Unexpected shop order query result")
+
 def WebHandler.wikiArticleExists (self : WebHandler) (slug : String) : IO Bool := do
   let query <- renderQuery (.select #[.named "slug"] "wiki_articles"
     (some (.equal (.column "slug") (.parameter (.text slug)))))
@@ -272,6 +348,17 @@ def WebHandler.servePage (self : WebHandler) (path : String) : IO Lithe.Response
       context := { context with wikiArticles := articles }
     if path == "/board" || path == "/board/" then
       context := { context with boardPosts := (← self.boardPosts).reverse }
+    if path == "/shop" || path.startsWith "/shop/" then
+      let products ← self.shopProducts
+      let mut shopContext := { context with
+        shopProducts := products
+        shopCart := ← self.shopCart products
+        shopLatestOrderId := ← self.shopLatestOrderId }
+      if path == "/shop/admin" || path.startsWith "/shop/admin/" then
+        shopContext := { shopContext with
+          shopInventory := ← self.shopInventory products
+          shopOrders := (← self.shopOrders products).reverse }
+      context := shopContext
     let html <- DevPages.render source context
     return (Lithe.Response.html html).setHeader "Cache-Control" "no-store"
   catch error =>
@@ -332,6 +419,162 @@ def WebHandler.wikiPostRoute (self : WebHandler) (operation : String) : Lithe.Ha
       if content.trimAscii.toString.isEmpty || content.length > 10000 then
         throw (Lithe.HttpError.badRequest "content must contain 1 to 10000 characters")
     self.performWikiOperation operation slug title content
+
+def WebHandler.shopAddToCartRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let params ← Lithe.Form.params (limit := some 4096) context
+  let some slug := WebHandler.formField params "productSlug" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'productSlug'")
+  let products ← self.shopProducts
+  unless products.any (·.slug == slug) do
+    throw (Lithe.HttpError.badRequest "unknown product")
+  let cart ← self.shopCart products
+  match cart.find? (·.product.slug == slug) with
+  | some item =>
+    let update ← renderQuery (.update "shop_cart_items"
+      #[("quantity", .parameter (.integer (Int.ofNat (item.quantity + 1))))]
+      (some (.equal (.column "product_slug") (.parameter (.text slug)))))
+    discard <| self.execute update
+  | none =>
+    let insert ← renderQuery (.insert "shop_cart_items" #["product_slug", "quantity"]
+      #[#[.text slug, .integer 1]])
+    discard <| self.execute insert
+  pure (Lithe.Response.empty 303 |>.setHeader "Location" "/shop/cart/")
+
+def WebHandler.shopCreateOrderRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let params ← Lithe.Form.params (limit := some 16384) context
+  let requiredField (name : String) (maxLength : Nat) := do
+    let some value := WebHandler.formField params name |
+      throw (Lithe.HttpError.badRequest s!"missing or repeated form field '{name}'")
+    let value := value.trimAscii.toString
+    if value.isEmpty || value.length > maxLength then
+      throw (Lithe.HttpError.badRequest s!"'{name}' must contain 1 to {maxLength} characters")
+    pure value
+  let customerName ← requiredField "customerName" 80
+  let postalCode ← requiredField "postalCode" 16
+  let address ← requiredField "address" 200
+  let phone ← requiredField "phone" 32
+  let products ← self.shopProducts
+  let cart ← self.shopCart products
+  if cart.isEmpty then
+    throw (Lithe.HttpError.badRequest "cart must not be empty")
+  let subtotal := cart.foldl
+    (fun total item => total + item.product.price * Int.ofNat item.quantity) 0
+  let shipping : Int := if subtotal >= 8000 then 0 else 550
+  let total := subtotal + shipping
+  let orderId? ← self.database.atomically do
+    let db ← get
+    for item in cart do
+      let stockQuery ← match MapleSQL.render (.select #[.named "stock"] "shop_inventory"
+          (some (.equal (.column "product_slug")
+            (.parameter (.text item.product.slug))))) with
+        | .ok query => pure query
+        | .error error => throw {
+            status := 500, code := "shop_sql_generation_failed", message := error }
+      let stockRows ← db.execute stockQuery
+      let stock ← match stockRows.toList with
+        | [#[.integer stock]] => pure stock
+        | _ => throw {
+            status := 500, code := "shop_inventory_unavailable",
+            message := "Product inventory was unavailable" }
+      if stock < Int.ofNat item.quantity then
+        throw (Lithe.HttpError.badRequest s!"insufficient stock for {item.product.slug}")
+    for item in cart do
+      let stockUpdate ← match MapleSQL.render (.update "shop_inventory"
+          #[("stock", .add (.column "stock")
+            (.parameter (.integer (-(Int.ofNat item.quantity)))))]
+          (some (.equal (.column "product_slug")
+            (.parameter (.text item.product.slug))))) with
+        | .ok query => pure query
+        | .error error => throw {
+            status := 500, code := "shop_sql_generation_failed", message := error }
+      discard <| db.execute stockUpdate
+    let insert ← match MapleSQL.render (.insert "shop_orders"
+        #["customer_name", "postal_code", "address", "phone", "total",
+          "payment_status", "fulfillment_status"]
+        #[#[.text customerName, .text postalCode, .text address, .text phone,
+          .integer total, .text "pending", .text "new"]]) with
+      | .ok query => pure query
+      | .error error => throw {
+          status := 500, code := "shop_sql_generation_failed", message := error }
+    discard <| db.execute insert
+    let idRows ← db.execute { sql := "SELECT last_insert_rowid()", params := #[] }
+    match idRows.toList with
+    | [#[.integer orderId]] =>
+      let items ← match MapleSQL.render (.insert "shop_order_items"
+          #["order_id", "product_slug", "quantity", "unit_price"]
+          (cart.map fun item => #[.integer orderId, .text item.product.slug,
+            .integer (Int.ofNat item.quantity), .integer item.product.price])) with
+        | .ok query => pure query
+        | .error error => throw {
+            status := 500, code := "shop_sql_generation_failed", message := error }
+      discard <| db.execute items
+      let clear ← match MapleSQL.render (.delete "shop_cart_items" none) with
+        | .ok query => pure query
+        | .error error => throw {
+            status := 500, code := "shop_sql_generation_failed", message := error }
+      discard <| db.execute clear
+      pure (some orderId)
+    | _ => pure none
+  match orderId? with
+  | some orderId =>
+    pure (Lithe.Response.empty 303
+      |>.setHeader "Location" s!"/shop/order-complete/?order={orderId}")
+  | none =>
+    IO.eprintln "Shop order save failed: inserted order id was unavailable"
+    pure (Lithe.Response.text "Order could not be saved\n" |>.withStatus 500)
+
+def WebHandler.shopInventoryUpdateRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let params ← Lithe.Form.params (limit := some 4096) context
+  let some slug := WebHandler.formField params "productSlug" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'productSlug'")
+  let some stockText := WebHandler.formField params "stock" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'stock'")
+  let some stock := stockText.toNat? |
+    throw (Lithe.HttpError.badRequest "stock must be a non-negative whole number")
+  if stock > 1000000 then
+    throw (Lithe.HttpError.badRequest "stock must not exceed 1000000")
+  unless (← self.shopProducts).any (·.slug == slug) do
+    throw (Lithe.HttpError.badRequest "unknown product")
+  let update ← renderQuery (.update "shop_inventory"
+    #[("stock", .parameter (.integer (Int.ofNat stock)))]
+    (some (.equal (.column "product_slug") (.parameter (.text slug)))))
+  discard <| self.execute update
+  pure (Lithe.Response.empty 303 |>.setHeader "Location" "/shop/admin/inventory/")
+
+def WebHandler.shopOrderStatusRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let params ← Lithe.Form.params (limit := some 4096) context
+  let some orderIdText := WebHandler.formField params "orderId" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'orderId'")
+  let some orderId := orderIdText.toInt? |
+    throw (Lithe.HttpError.badRequest "orderId must be an integer")
+  let some action := WebHandler.formField params "action" |
+    throw (Lithe.HttpError.badRequest "missing or repeated form field 'action'")
+  let products ← self.shopProducts
+  let some order := (← self.shopOrders products).find? (·.id == orderId) |
+    throw { status := 404, code := "order_not_found", message := "order not found" }
+  let columnValue ← match action with
+    | "confirm-payment" =>
+      if order.paymentStatus == "paid" then
+        throw (Lithe.HttpError.badRequest "payment is already confirmed")
+      pure ("payment_status", "paid")
+    | "mark-shipped" =>
+      if order.paymentStatus != "paid" then
+        throw (Lithe.HttpError.badRequest "payment must be confirmed before shipping")
+      if order.fulfillmentStatus != "new" then
+        throw (Lithe.HttpError.badRequest "only new orders can be marked shipped")
+      pure ("fulfillment_status", "shipped")
+    | "mark-delivered" =>
+      if order.fulfillmentStatus != "shipped" then
+        throw (Lithe.HttpError.badRequest "only shipped orders can be marked delivered")
+      pure ("fulfillment_status", "delivered")
+    | _ => throw (Lithe.HttpError.badRequest "unknown order action")
+  let update ← renderQuery (.update "shop_orders"
+    #[(columnValue.1, .parameter (.text columnValue.2))]
+    (some (.equal (.column "id") (.parameter (.integer orderId)))))
+  discard <| self.execute update
+  let location := if action == "confirm-payment" then
+    "/shop/admin/orders/" else "/shop/admin/orders/processed/"
+  pure (Lithe.Response.empty 303 |>.setHeader "Location" location)
 
 def WebHandler.fallback (self : WebHandler) : Lithe.Handler := fun context => do
   if context.req.method != .GET then
@@ -477,6 +720,10 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
     |>.post "/wiki/create" (self.wikiPostRoute "create")
     |>.post "/wiki/save" (self.wikiPostRoute "save")
     |>.post "/wiki/delete" (self.wikiPostRoute "delete")
+    |>.post "/shop/cart/add" (self.shopAddToCartRoute)
+    |>.post "/shop/orders" (self.shopCreateOrderRoute)
+    |>.post "/shop/admin/inventory/update" (self.shopInventoryUpdateRoute)
+    |>.post "/shop/admin/orders/status" (self.shopOrderStatusRoute)
     |>.withFallback (self.fallback)
 
 def WebHandler.create

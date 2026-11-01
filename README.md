@@ -54,6 +54,19 @@ Stop it with Ctrl+C.
 | `POST /chat-sse/send` | Validate and broadcast a chat message |
 | `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /orderbook/` | Interactive limit order book and matching engine demo |
+| `GET /shop/` | Japanese EC storefront demo |
+| `GET /shop/products/`, `/shop/products/{slug}` | Product list and product details |
+| `GET /shop/cart/` | Example cart page |
+| `POST /shop/cart/add` | Add a product to the SQLite-backed cart |
+| `GET /shop/checkout/` | Example checkout confirmation |
+| `POST /shop/orders` | Store an order and its items, then clear the cart |
+| `GET /shop/order-complete/` | Example order-completion page |
+| `GET /shop/admin/` | Store-management dashboard |
+| `GET /shop/admin/inventory/` | Shared inventory and stock controls |
+| `GET /shop/admin/orders/` | New orders, payment confirmation, and shipping controls |
+| `GET /shop/admin/orders/processed/` | Shipped and delivered orders |
+| `POST /shop/admin/inventory/update` | Update product stock |
+| `POST /shop/admin/orders/status` | Confirm payment or update delivery status |
 | `GET /api/orderbook` | Current in-memory bids, asks, and recent trades |
 | `POST /api/orderbook/reset` | Reset the demo order book to its initial synthetic orders |
 | `POST /api/orderbook/orders` | Submit a limit order; match by price-time priority |
@@ -87,6 +100,16 @@ Its page includes repeatable buy-pressure, sell-pressure, whipsaw, and
 depth-building scenarios; each resets the book before submitting its sequence.
 It is a single, unauthenticated learning demo with no balances, cancellation,
 or persistence; do not use it for real trading.
+The `/shop/` demo uses lean-html templates and a separate Lean page source for
+each route. Ordinary HTML links and forms provide full-page navigation:
+storefront → product list → product detail → cart → checkout → completion,
+without browser JavaScript. Products, cart contents, orders, and order items use
+MapleSQL-generated statements and the shared in-memory SQLite database. They are
+cleared when the server restarts. The unauthenticated, local-only management
+pages under `/shop/admin/` share that same database. They update inventory,
+payment confirmation, and new/shipped/delivered order state; order placement
+decrements stock and rejects insufficient inventory. Checkout does not perform
+real payment, shipping, or email delivery.
 The HTTP adapter preserves Lithe's Content-Type without adding another:
 HTML pages use `text/html; charset=utf-8`, JSON endpoints use
 `application/json; charset=utf-8`, and text errors use `text/plain; charset=utf-8`.

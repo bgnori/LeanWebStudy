@@ -107,16 +107,33 @@ def expectFailure (action : IO α) (message : String) : IO Unit := do
   | none => throw (IO.userError s!"Expected failure: {message}")
 
 def main : IO Unit := do
+  let testProduct : Page.ShopProduct := {
+    slug := "test", name := "Test", category := "Demo", price := 100,
+    art := "x", kind := "test", badge := "NEW", description := "Description",
+    details := "Details" }
   let context : Page.Context := {
     requestId := 7, path := "/hello", usersHtml := "<ul></ul>", sqliteDemoHtml := "<pre>demo</pre>",
     boardPosts := #[{ id := 3, author := "Ada", message := "Hello" }],
     wikiArticles := #[{ slug := "hello", title := "Hello", content := "Wiki text" }],
+    shopProducts := #[testProduct],
+    shopCart := #[{ product := testProduct, quantity := 2 }],
+    shopLatestOrderId := some 4,
+    shopInventory := #[{ product := testProduct, stock := 7 }],
+    shopOrders := #[{
+      id := 4, customerName := "Test User", postalCode := "000-0000",
+      address := "Test Address", phone := "000-0000-0000", total := 200,
+      paymentStatus := "paid", fulfillmentStatus := "shipped",
+      items := #[{
+        productSlug := "test", productName := "Test", quantity := 2, unitPrice := 100 }] }],
     chatPort := 12345 }
   match (Lean.fromJson? (Lean.toJson context) : Except String Page.Context) with
   | .ok decoded =>
     unless decoded.requestId == context.requestId && decoded.path == context.path &&
         decoded.usersHtml == context.usersHtml && decoded.sqliteDemoHtml == context.sqliteDemoHtml &&
         decoded.boardPosts == context.boardPosts && decoded.wikiArticles == context.wikiArticles &&
+        decoded.shopProducts == context.shopProducts && decoded.shopCart == context.shopCart &&
+        decoded.shopLatestOrderId == context.shopLatestOrderId &&
+        decoded.shopInventory == context.shopInventory && decoded.shopOrders == context.shopOrders &&
         decoded.chatPort == context.chatPort do
       throw (IO.userError "Page context must preserve every field through JSON")
   | .error error => throw (IO.userError s!"Page context decoding failed: {error}")
@@ -126,7 +143,9 @@ def main : IO Unit := do
   match (Lean.fromJson? legacyContext : Except String Page.Context) with
   | .ok decoded =>
     unless decoded.sqliteDemoHtml.isEmpty && decoded.boardPosts.isEmpty &&
-        decoded.wikiArticles.isEmpty && decoded.chatPort == 0 do
+        decoded.wikiArticles.isEmpty && decoded.shopProducts.isEmpty &&
+        decoded.shopCart.isEmpty && decoded.shopLatestOrderId.isNone &&
+        decoded.shopInventory.isEmpty && decoded.shopOrders.isEmpty && decoded.chatPort == 0 do
       throw (IO.userError "Legacy page context must default optional fields")
   | .error error => throw (IO.userError s!"Legacy page context decoding failed: {error}")
   let invalidContext := Lean.Json.mkObj [
@@ -158,6 +177,31 @@ def main : IO Unit := do
   unless (← db.execute boardSelect) ==
       #[#[.integer 1, .text "Ada", .text "Hello from SQLite"]] do
     throw (IO.userError "MapleSQL post insertion and retrieval must use the shared SQLite database")
+  let productSelect <- renderQuery (.select #[.all] "shop_products" none)
+  unless (← db.execute productSelect).size == 8 do
+    throw (IO.userError "A newly seeded shop must contain eight products")
+  let inventorySelect <- renderQuery (.select #[.all] "shop_inventory" none)
+  let inventoryRows ← db.execute inventorySelect
+  unless inventoryRows.size == 8 &&
+      inventoryRows.all (fun row => row[1]? == some (.integer 20)) do
+    throw (IO.userError "A newly seeded shop must have inventory for every product")
+  let cartInsert <- renderQuery (.insert "shop_cart_items" #["product_slug", "quantity"]
+    #[#[.text "canvas-tote", .integer 2]])
+  discard <| db.execute cartInsert
+  let cartSelect <- renderQuery (.select #[.all] "shop_cart_items" none)
+  unless (← db.execute cartSelect) == #[#[.text "canvas-tote", .integer 2]] do
+    throw (IO.userError "MapleSQL cart insertion must persist in the shared SQLite database")
+  let orderInsert <- renderQuery (.insert "shop_orders"
+    #["customer_name", "postal_code", "address", "phone", "total",
+      "payment_status", "fulfillment_status"]
+    #[#[.text "Test User", .text "000-0000", .text "Test Address",
+      .text "000-0000-0000", .integer 8250, .text "pending", .text "new"]])
+  discard <| db.execute orderInsert
+  let orderSelect <- renderQuery (.select #[.all] "shop_orders" none)
+  unless (← db.execute orderSelect) ==
+      #[#[.integer 1, .text "Test User", .text "000-0000", .text "Test Address",
+        .text "000-0000-0000", .integer 8250, .text "pending", .text "new"]] do
+    throw (IO.userError "MapleSQL order insertion must persist in the shared SQLite database")
   let wikiSelect <- renderQuery (.select #[.all] "wiki_articles" none)
   unless (← db.execute wikiSelect).size == 3 do
     throw (IO.userError "A newly seeded wiki must contain three starter articles")
