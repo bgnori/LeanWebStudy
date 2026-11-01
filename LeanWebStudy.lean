@@ -8,6 +8,7 @@ import LeanWebStudy.SSEChat
 import LeanWebStudy.OrderBook
 import LeanWebStudy.Shop
 import LeanWebStudy.ShopAdmin
+import LeanWebStudy.IRT
 import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch
@@ -240,6 +241,116 @@ def WebHandler.formField (params : Std.HashMap String (Array String))
     (name : String) : Option String := do
   let values ← params.get? name
   if values.size == 1 then values[0]? else none
+
+def WebHandler.catState (db : Database) : IO (Array IRT.Item × Array IRT.Response) := do
+  let items ← db.execute {
+    sql := "SELECT item_id, a_milli, b_milli, c_milli FROM cat_items ORDER BY item_id"
+    params := #[] }
+  let items ← items.mapM fun row =>
+    match row.toList with
+    | [.integer id, .integer aMilli, .integer bMilli, .integer cMilli] => do
+      let some id := id.toNat? | throw (IO.userError "CAT item id must be positive")
+      let some aMilli := aMilli.toNat? | throw (IO.userError "CAT discrimination must be non-negative")
+      let some cMilli := cMilli.toNat? | throw (IO.userError "CAT guessing must be non-negative")
+      pure { id, aMilli, bMilli, cMilli : IRT.Item }
+    | _ => throw (IO.userError "Unexpected CAT item query result")
+  let rows ← db.execute {
+    sql := "SELECT item_id, correct FROM cat_responses ORDER BY attempt"
+    params := #[] }
+  let responses ← rows.mapM fun row =>
+    match row.toList with
+    | [.integer itemId, .integer correct] => do
+      let some itemId := itemId.toNat? | throw (IO.userError "CAT response item id must be positive")
+      if correct != 0 && correct != 1 then
+        throw (IO.userError "CAT response correctness must be zero or one")
+      pure { itemId, correct := correct == 1 : IRT.Response }
+    | _ => throw (IO.userError "Unexpected CAT response query result")
+  return (items, responses)
+
+def WebHandler.catItemJson (item : IRT.Item) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("id", Lean.toJson item.id),
+    ("aMilli", Lean.toJson item.aMilli),
+    ("bMilli", Lean.toJson item.bMilli),
+    ("cMilli", Lean.toJson item.cMilli)]
+
+def WebHandler.catSnapshotJson (items : Array IRT.Item)
+    (responses : Array IRT.Response) : Lean.Json := Id.run do
+  let mut history := #[]
+  let mut priorResponses := #[]
+  for response in responses do
+    priorResponses := priorResponses.push response
+    history := history.push (Lean.Json.mkObj [
+      ("itemId", Lean.toJson response.itemId),
+      ("correct", Lean.toJson response.correct),
+      ("thetaMilli", Lean.toJson
+        (IRT.abilityMilli (IRT.posteriorAbility items priorResponses)))])
+  let theta := IRT.posteriorAbility items responses
+  let next := if responses.size < 10 then IRT.nextItem items responses else none
+  return Lean.Json.mkObj [
+    ("items", .arr (items.map WebHandler.catItemJson)),
+    ("responses", .arr history),
+    ("abilityMilli", Lean.toJson (IRT.abilityMilli theta)),
+    ("nextItem", next.map WebHandler.catItemJson |>.getD .null),
+    ("totalQuestions", Lean.toJson (10 : Nat)),
+    ("finished", Lean.toJson (responses.size >= 10 || next.isNone))]
+
+def WebHandler.catSnapshot (self : WebHandler) : IO Lean.Json :=
+  self.database.atomically do
+    let db ← get
+    let (items, responses) ← WebHandler.catState db
+    pure (WebHandler.catSnapshotJson items responses)
+
+def WebHandler.validLocalOrigin (self : WebHandler) (context : Lithe.RequestCtx) : Bool :=
+  match context.req.header? "host", context.req.header? "origin" with
+  | some host, some origin =>
+    #[s!"127.0.0.1:{self.httpPort}", s!"localhost:{self.httpPort}"].contains host &&
+      origin == "http://" ++ host
+  | _, _ => false
+
+def WebHandler.catCurrentRoute (self : WebHandler) : Lithe.Handler := fun _ => do
+  let snapshot ← self.catSnapshot
+  pure ((Lithe.Response.json snapshot).setHeader "Cache-Control" "no-store")
+
+def WebHandler.catAnswerRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  unless self.validLocalOrigin context do
+    throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let params ← Lithe.Form.params (limit := some 4096) context
+  let some itemIdText := WebHandler.formField params "itemId" |
+    throw (Lithe.HttpError.badRequest "exactly one itemId field is required")
+  let some itemId := itemIdText.toNat? |
+    throw (Lithe.HttpError.badRequest "itemId must be a positive integer")
+  let some correctText := WebHandler.formField params "correct" |
+    throw (Lithe.HttpError.badRequest "exactly one correct field is required")
+  let correct ← match correctText with
+    | "0" => pure false
+    | "1" => pure true
+    | _ => throw (Lithe.HttpError.badRequest "correct must be zero or one")
+  let snapshot ← self.database.atomically do
+    let db ← get
+    let (items, responses) ← WebHandler.catState db
+    if responses.size >= 10 then
+      throw { status := 409, code := "cat_complete", message := "CAT run is already complete" }
+    let some next := IRT.nextItem items responses |
+      throw { status := 409, code := "cat_complete", message := "No unused CAT item is available" }
+    if next.id != itemId then
+      throw (Lithe.HttpError.badRequest "itemId is not the currently selected CAT item")
+    let _ ← db.execute {
+      sql := "INSERT INTO cat_responses (item_id, correct) VALUES (?, ?)"
+      params := #[.integer (Int.ofNat itemId), .integer (if correct then 1 else 0)] }
+    let (items, responses) ← WebHandler.catState db
+    pure (WebHandler.catSnapshotJson items responses)
+  pure ((Lithe.Response.json snapshot).setHeader "Cache-Control" "no-store")
+
+def WebHandler.catResetRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  unless self.validLocalOrigin context do
+    throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let snapshot ← self.database.atomically do
+    let db ← get
+    let _ ← db.execute { sql := "DELETE FROM cat_responses", params := #[] }
+    let (items, responses) ← WebHandler.catState db
+    pure (WebHandler.catSnapshotJson items responses)
+  pure ((Lithe.Response.json snapshot).setHeader "Cache-Control" "no-store")
 
 def orderSideJson : OrderBook.Side → Lean.Json
   | .buy => Lean.toJson ("buy" : String)
@@ -709,6 +820,9 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
     |>.get "/api/orderbook" (self.orderBookGetRoute)
     |>.post "/api/orderbook/reset" (self.resetOrderBookRoute)
     |>.post "/api/orderbook/orders" (self.submitOrderRoute)
+    |>.get "/api/cat/current" (self.catCurrentRoute)
+    |>.post "/api/cat/answer" (self.catAnswerRoute)
+    |>.post "/api/cat/reset" (self.catResetRoute)
     |>.get "/chat-sse/events" (fun context => self.fallback context)
     |>.post "/chat-sse/send" (self.sseChatSendRoute)
     |>.get "/chat/endpoint" (fun context => do

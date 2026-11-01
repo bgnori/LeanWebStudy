@@ -155,6 +155,29 @@ def main : IO Unit := do
   | .error _ => pure ()
   | .ok _ => throw (IO.userError "Present but invalid demo HTML must not be silently defaulted")
   let db <- Database.seededMemory
+  unless IRT.itemPool.size == 30 do
+    throw (IO.userError "CAT item pool must contain exactly thirty items")
+  let catItems ← db.execute {
+    sql := "SELECT item_id, a_milli, b_milli, c_milli FROM cat_items ORDER BY item_id"
+    params := #[] }
+  unless catItems.size == 30 && catItems[0]? ==
+      some #[.integer 1, .integer 800, .integer (-2600), .integer 150] do
+    throw (IO.userError "CAT item parameters must be seeded in SQLite")
+  let catResponses ← db.execute { sql := "SELECT * FROM cat_responses", params := #[] }
+  unless catResponses.isEmpty do
+    throw (IO.userError "A new CAT run must have no saved responses")
+  let startingAbility := IRT.posteriorAbility IRT.itemPool #[]
+  let correctAbility := IRT.posteriorAbility IRT.itemPool
+    #[{ itemId := 14, correct := true }]
+  let incorrectAbility := IRT.posteriorAbility IRT.itemPool
+    #[{ itemId := 14, correct := false }]
+  unless correctAbility > startingAbility && incorrectAbility < startingAbility do
+    throw (IO.userError "CAT EAP ability estimates must respond to correctness")
+  let some firstItem := IRT.nextItem IRT.itemPool #[] |
+    throw (IO.userError "CAT must select an initial item")
+  unless IRT.nextItem IRT.itemPool #[{ itemId := firstItem.id, correct := true }] !=
+      some firstItem do
+    throw (IO.userError "CAT must not select an item more than once")
   let query <- match sampleQuery 3 with
     | .ok query => pure query
     | .error error => throw (IO.userError error)

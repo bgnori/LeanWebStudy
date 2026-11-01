@@ -59,7 +59,8 @@ check_status() {
   [[ "$actual" == "$expected" ]] || fail "Expected HTTP $expected, got $actual"
   if [[ "$expected" != 200 ]]; then
     check_content_type 'text/plain; charset=utf-8'
-  elif [[ "$*" == *"$base/api/query"* || "$*" == *"$base/health"* ]]; then
+  elif [[ "$*" == *"$base/api/query"* || "$*" == *"$base/api/cat/current"* ||
+      "$*" == *"$base/health"* ]]; then
     check_content_type 'application/json; charset=utf-8'
   else
     check_content_type 'text/html; charset=utf-8'
@@ -76,6 +77,8 @@ if grep -q 'href="/maplesql/"' "$work/body"; then
   fail "MapleSQL should not have a separate feature page"
 fi
 grep -q 'href="/templates/"' "$work/body" || fail "Template feature index link"
+grep -q 'href="/cat/">IRT / Computerized Adaptive Testing デモ' "$work/body" ||
+  fail "IRT CAT feature index link"
 grep -q 'href="/board/">掲示板 Webアプリ' "$work/body" || fail "Bulletin board feature index link"
 if grep -q 'SQLiteのユーザー一覧' "$work/body"; then
   fail "Root page should be the feature index, not the SQLite example"
@@ -135,6 +138,42 @@ jq -e '.requestId == 6 and .sql == "SELECT * FROM \"users\" WHERE \"id\" > ?" an
     [10,"Clementina DuBuque","user-10@example.invalid"]]' "$work/body" >/dev/null ||
   fail "SQL, bound parameters, or database result"
 
+check_status 200 "$base/cat/"
+grep -q '3パラメータ・ロジスティックモデル' "$work/body" || fail "CAT page model explanation"
+check_status 200 "$base/api/cat/current"
+jq -e '.items | length == 30' "$work/body" >/dev/null || fail "CAT SQLite item pool"
+jq -e '.responses | length == 0' "$work/body" >/dev/null || fail "CAT initial response history"
+cat_seen='[]'
+for attempt in $(seq 1 10); do
+  cat_item="$(jq -r '.nextItem.id' "$work/body")"
+  [[ "$cat_item" != "null" ]] || fail "CAT ended before ten questions"
+  cat_seen="$(jq -cn --argjson seen "$cat_seen" --argjson item "$cat_item" '$seen + [$item]')"
+  correct="$((attempt % 2))"
+  actual="$(curl -sS --max-time 10 -H "Origin: $base" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "itemId=$cat_item&correct=$correct" -o "$work/body" -w '%{http_code}' \
+    "$base/api/cat/answer")"
+  [[ "$actual" == 200 ]] || fail "CAT answer $attempt returned HTTP $actual"
+  jq -e --argjson count "$attempt" '.responses | length == $count' "$work/body" >/dev/null ||
+    fail "CAT response history after question $attempt"
+done
+jq -e 'length == 10 and (unique | length) == 10' <<<"$cat_seen" >/dev/null ||
+  fail "CAT must select ten unique items"
+jq -e '.finished and .nextItem == null and (.responses | length == 10)' "$work/body" >/dev/null ||
+  fail "CAT completion after ten answers"
+actual="$(curl -sS --max-time 10 -H "Origin: $base" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data 'itemId=1&correct=1' -o "$work/body" -w '%{http_code}' \
+  "$base/api/cat/answer")"
+[[ "$actual" == 409 ]] || fail "Completed CAT run must reject more answers"
+actual="$(curl -sS --max-time 10 -H "Origin: $base" -X POST \
+  -o "$work/body" -w '%{http_code}' "$base/api/cat/reset")"
+[[ "$actual" == 200 ]] || fail "CAT reset returned HTTP $actual"
+jq -e '.responses | length == 0' "$work/body" >/dev/null || fail "CAT reset did not clear history"
+actual="$(curl -sS --max-time 10 -H 'Origin: https://example.invalid' -X POST \
+  -o "$work/body" -w '%{http_code}' "$base/api/cat/reset")"
+[[ "$actual" == 403 ]] || fail "CAT reset must reject a foreign origin"
+
 check_status 404 "$base/missing"
 check_status 405 -X POST "$base/"
 grep -qi '^allow: GET' "$work/headers" || fail "405 Allow header"
@@ -142,7 +181,7 @@ grep -qi '^allow: GET' "$work/headers" || fail "405 Allow header"
 seq 1 32 | xargs -P 8 -I '{}' curl -fsS --max-time 5 "$base/api/query" \
   >"$work/parallel.json"
 jq -se 'length == 32 and
-  ([.[].requestId] | sort) == [range(7; 39)] and
+  ([.[].requestId] | sort) == [range(8; 40)] and
   all(.[]; .params == [.requestId] and .sql == "SELECT * FROM \"users\" WHERE \"id\" > ?" and
     ([.rows[][0]] == [range(.requestId + 1; 11)]) and
     all(.rows[]; length == 3 and .[2] == ("user-" + (.[0] | tostring) + "@example.invalid")))' \
@@ -233,4 +272,4 @@ actual="$(curl -sS --max-time 5 -o "$work/body" -w '%{http_code}' \
   --data-urlencode 'content=Invalid body' "$base/wiki/create")"
 [[ "$actual" == 400 ]] || fail "Invalid wiki slug must be rejected"
 
-echo "PASS: bulletin board, SQLite Wiki CRUD and escaping, SQLite HTML and SQL JSON, health, 404/405, concurrent queries, port validation"
+echo "PASS: CAT 3PL and adaptive flow, bulletin board, SQLite Wiki CRUD and escaping, SQLite HTML and SQL JSON, health, 404/405, concurrent queries, port validation"

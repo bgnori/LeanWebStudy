@@ -66,6 +66,10 @@ Stop it with Ctrl+C.
 | `POST /chat-sse/send` | Validate and broadcast a chat message |
 | `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /orderbook/` | Interactive limit order book and matching engine demo |
+| `GET /cat/` | IRT 3PL computerized adaptive testing demo with 30 SQLite items and 10 adaptive questions |
+| `GET /api/cat/current` | CAT item pool, saved responses, EAP ability estimate, and next selected item |
+| `POST /api/cat/answer` | Save an answer and update the ability estimate and next item |
+| `POST /api/cat/reset` | Clear the shared CAT response history |
 | `GET /shop/` | Japanese EC storefront demo |
 | `GET /shop/products/`, `/shop/products/{slug}` | Product list and product details |
 | `GET /shop/cart/` | Example cart page |
@@ -108,6 +112,13 @@ handles reconnection. Both chat implementations are independent and local-only.
 The order book starts with synthetic bids and asks, matches crossing limit
 orders by price then order ID (FIFO), and keeps the latest 20 trades in memory.
 Prices are accepted to two decimal places and quantities are whole numbers.
+The `/cat/` page stores 30 synthetic 3PL item parameter sets and its shared
+10-answer demo run in the in-memory SQLite database. It estimates ability with
+EAP under a standard normal prior and chooses the unused item with the greatest
+Fisher information at the current estimate. The displayed item difficulty is
+the synthetic pool parameter, not a live item-calibration estimate; the demo
+does not contain question text. CAT response history is shared by all visitors
+and remains until the reset control is used or the server restarts.
 Its page includes repeatable buy-pressure, sell-pressure, whipsaw, and
 depth-building scenarios; each resets the book before submitting its sequence.
 It is a single, unauthenticated learning demo with no balances, cancellation,

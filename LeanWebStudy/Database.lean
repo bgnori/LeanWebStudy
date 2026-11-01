@@ -1,5 +1,6 @@
 import MapleSQL
 import LeanWebStudy.SampleData
+import LeanWebStudy.IRT
 
 namespace LeanWebStudy
 
@@ -53,6 +54,18 @@ def Database.seededMemory : IO Database := do
   discard <| db.execute {
     sql := "CREATE TABLE shop_order_items (order_id INTEGER NOT NULL, product_slug TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price INTEGER NOT NULL, FOREIGN KEY (order_id) REFERENCES shop_orders(id), FOREIGN KEY (product_slug) REFERENCES shop_products(slug))"
     params := #[] }
+  discard <| db.execute {
+    sql := "CREATE TABLE cat_items (item_id INTEGER PRIMARY KEY, a_milli INTEGER NOT NULL, b_milli INTEGER NOT NULL, c_milli INTEGER NOT NULL)"
+    params := #[] }
+  discard <| db.execute {
+    sql := "CREATE TABLE cat_responses (attempt INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER NOT NULL REFERENCES cat_items(item_id), correct INTEGER NOT NULL CHECK (correct IN (0, 1)))"
+    params := #[] }
+  for item in IRT.itemPool do
+    discard <| db.execute {
+      sql := "INSERT INTO cat_items (item_id, a_milli, b_milli, c_milli) VALUES (?, ?, ?, ?)"
+      params := #[
+        .integer (Int.ofNat item.id), .integer (Int.ofNat item.aMilli),
+        .integer item.bMilli, .integer (Int.ofNat item.cMilli)] }
   let shopProducts := #[
     #["canvas-tote", "毎日のキャンバストート", "バッグ · オーガニックコットン",
       "3850", "👜", "tote", "BEST SELLER",
