@@ -36,6 +36,47 @@ def queryMatches (requestId : Nat) : Bool :=
 #guard !(Pong.response 1
   "{\"type\":\"ball\",\"x\":801,\"y\":225,\"left\":0,\"right\":0}".toUTF8).1
 
+#guard OrderBook.parsePrice "101" == some 10100
+#guard OrderBook.parsePrice "101.5" == some 10150
+#guard OrderBook.parsePrice "101.05" == some 10105
+#guard OrderBook.parsePrice "0.00" == none
+#guard OrderBook.parsePrice "1.001" == none
+#guard OrderBook.formatPrice 10105 == "101.05"
+
+def partialOrderMatchWorks : Bool := Id.run do
+  let result := OrderBook.submit OrderBook.initial .buy 10100 7
+  return result.trades == #[{
+      id := 1, makerOrderId := 3, takerOrderId := 5, price := 10100, quantity := 4 }] &&
+    result.remaining == 3 &&
+    result.book.orders.any (fun order =>
+      order.id == 5 && order.side == .buy && order.price == 10100 && order.remaining == 3)
+
+def multipleOrderMatchWorks : Bool := Id.run do
+  let result := OrderBook.submit OrderBook.initial .sell 9950 13
+  return result.trades == #[
+      { id := 1, makerOrderId := 1, takerOrderId := 5, price := 10000, quantity := 5 },
+      { id := 2, makerOrderId := 2, takerOrderId := 5, price := 9950, quantity := 8 }] &&
+    result.remaining == 0 &&
+    result.book.orders.all (fun order => order.side == .sell)
+
+def timePriorityMatchWorks : Bool := Id.run do
+  let book := { OrderBook.initial with
+    orders := #[
+      { id := 2, side := .sell, price := 10200, remaining := 2 },
+      { id := 1, side := .sell, price := 10200, remaining := 5 }]
+    nextOrderId := 3 }
+  let result := OrderBook.submit book .buy 10200 4
+  return result.trades == #[{
+      id := 1, makerOrderId := 1, takerOrderId := 3, price := 10200, quantity := 4 }] &&
+    result.book.orders.size == 2 &&
+    result.book.orders[0]!.id == 2 &&
+    result.book.orders[1]!.id == 1 &&
+    result.book.orders[1]!.remaining == 1
+
+#guard partialOrderMatchWorks
+#guard multipleOrderMatchWorks
+#guard timePriorityMatchWorks
+
 #guard DevPages.relativePath "/" == some (System.FilePath.mk "index.lean")
 #guard DevPages.relativePath "/hello" == some (System.FilePath.mk "hello.lean")
 #guard DevPages.relativePath "/sqlite/" ==

@@ -19,11 +19,12 @@ def main (args : List String) : IO Unit := do
   let pages <- LeanWebStudy.DevPages.open (directory.getD "Pages")
   let counter <- Std.Mutex.new 0
   let database <- Std.Mutex.new (← LeanWebStudy.Database.seededMemory)
+  let orderBook <- Std.Mutex.new LeanWebStudy.OrderBook.initial
   let sseChat <- LeanWebStudy.SSEChat.new
   let chat ← LeanWebStudy.Chat.openServer port.toUInt16
     LeanWebStudy.Chat.response LeanWebStudy.Pong.response
   let chatPort ← LeanWebStudy.Chat.port chat
-  let handler := LeanWebStudy.WebHandler.create counter database pages sseChat
+  let handler := LeanWebStudy.WebHandler.create counter database orderBook pages sseChat
     port.toUInt16 chatPort
   Std.Async.Async.block do
     let server <- Std.Http.Server.serve

@@ -53,6 +53,9 @@ Stop it with Ctrl+C.
 | `GET /chat-sse/events` | Server-Sent Events chat stream |
 | `POST /chat-sse/send` | Validate and broadcast a chat message |
 | `GET /pong/` | WebSocket real-time two-player Pong |
+| `GET /orderbook/` | Interactive limit order book and matching engine demo |
+| `GET /api/orderbook` | Current in-memory bids, asks, and recent trades |
+| `POST /api/orderbook/orders` | Submit a limit order; match by price-time priority |
 | `GET /chat/endpoint` | WebSocket port metadata for the development preview |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
@@ -76,6 +79,11 @@ for setup, limits, reconnection behavior, and local-only restrictions.
 The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
 updates and POST for sending; its latest 50 messages are in-memory and EventSource
 handles reconnection. Both chat implementations are independent and local-only.
+The order book starts with synthetic bids and asks, matches crossing limit
+orders by price then order ID (FIFO), and keeps the latest 20 trades in memory.
+Prices are accepted to two decimal places and quantities are whole numbers.
+It is a single, unauthenticated learning demo with no balances, cancellation,
+or persistence; do not use it for real trading.
 The HTTP adapter preserves Lithe's Content-Type without adding another:
 HTML pages use `text/html; charset=utf-8`, JSON endpoints use
 `application/json; charset=utf-8`, and text errors use `text/plain; charset=utf-8`.

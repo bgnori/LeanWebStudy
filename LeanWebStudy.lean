@@ -5,6 +5,7 @@ import LeanWebStudy.DevPages
 import LeanWebStudy.Chat
 import LeanWebStudy.Pong
 import LeanWebStudy.SSEChat
+import LeanWebStudy.OrderBook
 import Lean.Data.Json
 import Lithe.Router.Builder
 import Lithe.Runtime.Dispatch
@@ -38,6 +39,7 @@ def queryJson (requestId : Nat) : Except String Lean.Json := do
 structure WebHandler where
   counter : Std.Mutex Nat
   database : Std.Mutex Database
+  orderBook : Std.Mutex OrderBook.Book
   pages : DevPages
   router : Lithe.Router
   httpPort : UInt16
@@ -162,6 +164,34 @@ def WebHandler.formField (params : Std.HashMap String (Array String))
     (name : String) : Option String := do
   let values ← params.get? name
   if values.size == 1 then values[0]? else none
+
+def orderSideJson : OrderBook.Side → Lean.Json
+  | .buy => Lean.toJson ("buy" : String)
+  | .sell => Lean.toJson ("sell" : String)
+
+def orderJson (order : OrderBook.Order) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("id", Lean.toJson order.id),
+    ("side", orderSideJson order.side),
+    ("price", Lean.toJson order.price),
+    ("remaining", Lean.toJson order.remaining)]
+
+def tradeJson (trade : OrderBook.Trade) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("id", Lean.toJson trade.id),
+    ("makerOrderId", Lean.toJson trade.makerOrderId),
+    ("takerOrderId", Lean.toJson trade.takerOrderId),
+    ("price", Lean.toJson trade.price),
+    ("quantity", Lean.toJson trade.quantity)]
+
+def orderBookJson (book : OrderBook.Book) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("orders", .arr (book.orders.map orderJson)),
+    ("trades", .arr (book.trades.map tradeJson))]
+
+def WebHandler.orderBookSnapshot (self : WebHandler) : IO OrderBook.Book :=
+  self.orderBook.atomically do
+    get
 
 def WebHandler.validWikiSlug (slug : String) : Bool :=
   !slug.isEmpty && slug.length <= 48 && !slug.startsWith "-" && !slug.endsWith "-" &&
@@ -309,6 +339,51 @@ def WebHandler.fallback (self : WebHandler) : Lithe.Handler := fun context => do
       |>.setHeader "Allow" "GET"
   self.servePage context.req.path
 
+def WebHandler.orderBookGetRoute (self : WebHandler) : Lithe.Handler := fun _ => do
+  let response := Lithe.Response.json (orderBookJson (← self.orderBookSnapshot))
+  pure (response.setHeader "Cache-Control" "no-store")
+
+def WebHandler.submitOrderRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let some host := context.req.header? "host"
+    | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let some origin := context.req.header? "origin"
+    | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let allowedHosts := #[s!"127.0.0.1:{self.httpPort}", s!"localhost:{self.httpPort}"]
+  unless allowedHosts.contains host && origin == "http://" ++ host do
+    throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let params ← Lithe.Form.params (limit := some 8192) context
+  let some sideValue := WebHandler.formField params "side" |
+    throw (Lithe.HttpError.badRequest "exactly one side field is required")
+  let side := match sideValue with
+    | "buy" => some OrderBook.Side.buy
+    | "sell" => some OrderBook.Side.sell
+    | _ => none
+  let some side := side |
+    throw (Lithe.HttpError.badRequest "side must be buy or sell")
+  let some priceText := WebHandler.formField params "price" |
+    throw (Lithe.HttpError.badRequest "exactly one price field is required")
+  let some price := OrderBook.parsePrice priceText |
+    throw (Lithe.HttpError.badRequest "price must be a positive amount with at most two decimals")
+  if price > 100000000 then
+    throw (Lithe.HttpError.badRequest "price must not exceed 1000000.00")
+  let some quantityText := WebHandler.formField params "quantity" |
+    throw (Lithe.HttpError.badRequest "exactly one quantity field is required")
+  let some quantity := quantityText.toNat? |
+    throw (Lithe.HttpError.badRequest "quantity must be a positive whole number")
+  if quantity == 0 || quantity > 1000000 then
+    throw (Lithe.HttpError.badRequest "quantity must be between 1 and 1000000")
+  let submission ← self.orderBook.atomically do
+    let book ← get
+    let result := OrderBook.submit book side price quantity
+    set result.book
+    pure result
+  let response := Lean.Json.mkObj [
+    ("orderId", Lean.toJson submission.orderId),
+    ("remaining", Lean.toJson submission.remaining),
+    ("trades", .arr (submission.trades.map tradeJson)),
+    ("book", orderBookJson submission.book)]
+  pure ((Lithe.Response.json response).setHeader "Cache-Control" "no-store")
+
 def WebHandler.healthRoute (self : WebHandler) : Lithe.Handler := fun context => do
   if context.req.path != "/health" then
     self.fallback context
@@ -375,6 +450,8 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
   Lithe.Router.empty
     |>.get "/health" (self.healthRoute)
     |>.get "/api/query" (self.queryRoute)
+    |>.get "/api/orderbook" (self.orderBookGetRoute)
+    |>.post "/api/orderbook/orders" (self.submitOrderRoute)
     |>.get "/chat-sse/events" (fun context => self.fallback context)
     |>.post "/chat-sse/send" (self.sseChatSendRoute)
     |>.get "/chat/endpoint" (fun context => do
@@ -389,11 +466,12 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
     |>.withFallback (self.fallback)
 
 def WebHandler.create
-    (counter : Std.Mutex Nat) (database : Std.Mutex Database) (pages : DevPages)
+    (counter : Std.Mutex Nat) (database : Std.Mutex Database)
+    (orderBook : Std.Mutex OrderBook.Book) (pages : DevPages)
     (sseChat : SSEChat.Server) (httpPort chatPort : UInt16) :
     WebHandler :=
   let handler : WebHandler := {
-    counter, database, pages, sseChat, httpPort, chatPort, router := .empty }
+    counter, database, orderBook, pages, sseChat, httpPort, chatPort, router := .empty }
   { handler with router := handler.registerRoutes }
 
 def WebHandler.toLitheRequest (request : Request Body.Stream) : IO Lithe.Request := do
