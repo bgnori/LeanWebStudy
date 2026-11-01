@@ -11,7 +11,33 @@ private def client : String := r#"
   const chartEmpty = document.getElementById("chart-empty");
   const status = document.getElementById("status");
   const error = document.getElementById("error");
+  const submitButton = form.querySelector("button[type=submit]");
+  const scenarioButtons = [...document.querySelectorAll("[data-scenario]")];
   const svgNamespace = "http://www.w3.org/2000/svg";
+  const scenarios = {
+    buyPressure: [
+      {side: "buy", price: "100.50", quantity: 6},
+      {side: "buy", price: "101.00", quantity: 6},
+      {side: "buy", price: "101.50", quantity: 8}
+    ],
+    sellPressure: [
+      {side: "sell", price: "100.50", quantity: 4},
+      {side: "sell", price: "100.00", quantity: 7},
+      {side: "sell", price: "99.50", quantity: 10}
+    ],
+    whipsaw: [
+      {side: "buy", price: "101.00", quantity: 4},
+      {side: "sell", price: "100.00", quantity: 5},
+      {side: "buy", price: "101.50", quantity: 7},
+      {side: "sell", price: "99.50", quantity: 8}
+    ],
+    buildDepth: [
+      {side: "buy", price: "99.75", quantity: 5},
+      {side: "buy", price: "100.25", quantity: 7},
+      {side: "sell", price: "100.75", quantity: 6},
+      {side: "sell", price: "101.25", quantity: 9}
+    ]
+  };
 
   function priceText(cents) {
     return (cents / 100).toFixed(2);
@@ -181,23 +207,31 @@ private def client : String := r#"
     status.textContent = "注文を入力できます。";
   }
 
+  async function submitOrder(order) {
+    const response = await fetch("/api/orderbook/orders", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+      body: new URLSearchParams(order)
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail.trim() || `注文に失敗しました (HTTP ${response.status})`);
+    }
+    return response.json();
+  }
+
+  function setControlsDisabled(disabled) {
+    submitButton.disabled = disabled;
+    for (const button of scenarioButtons) button.disabled = disabled;
+  }
+
   form.addEventListener("submit", async event => {
     event.preventDefault();
     error.textContent = "";
     status.textContent = "注文を送信しています…";
-    const button = form.querySelector("button[type=submit]");
-    button.disabled = true;
+    setControlsDisabled(true);
     try {
-      const response = await fetch("/api/orderbook/orders", {
-        method: "POST",
-        headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
-        body: new URLSearchParams(new FormData(form))
-      });
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail.trim() || `注文に失敗しました (HTTP ${response.status})`);
-      }
-      const result = await response.json();
+      const result = await submitOrder(Object.fromEntries(new FormData(form)));
       render(result.book);
       status.textContent = result.trades.length
         ? `注文 #${result.orderId} は ${result.trades.length} 件に分かれて約定しました。`
@@ -209,9 +243,37 @@ private def client : String := r#"
       error.textContent = failure.message;
       status.textContent = "注文を処理できませんでした。";
     } finally {
-      button.disabled = false;
+      setControlsDisabled(false);
     }
   });
+
+  for (const button of scenarioButtons) {
+    button.addEventListener("click", async () => {
+      const orders = scenarios[button.dataset.scenario];
+      error.textContent = "";
+      setControlsDisabled(true);
+      try {
+        status.textContent = "注文板を初期状態に戻しています…";
+        const resetResponse = await fetch("/api/orderbook/reset", {method: "POST"});
+        if (!resetResponse.ok)
+          throw new Error(`注文板の初期化に失敗しました (HTTP ${resetResponse.status})`);
+        render(await resetResponse.json());
+        for (const [index, order] of orders.entries()) {
+          status.textContent =
+            `${button.dataset.label}: 注文 ${index + 1} / ${orders.length} を流入中…`;
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const result = await submitOrder(order);
+          render(result.book);
+        }
+        status.textContent = `${button.dataset.label}を再現しました。`;
+      } catch (failure) {
+        error.textContent = failure.message;
+        status.textContent = "シナリオを完了できませんでした。";
+      } finally {
+        setControlsDisabled(false);
+      }
+    });
+  }
 
   loadBook().catch(failure => {
     error.textContent = failure.message;
@@ -254,18 +316,41 @@ def main : IO Unit :=
       "display:none}.form-grid{display:grid;" ++
       "grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.form-grid label{display:block;" ++
       "font-weight:600;margin-bottom:6px}input,select,button{box-sizing:border-box;width:100%;" ++
-      "padding:11px;font:inherit;border:1px solid #ccd5e2;border-radius:7px}button{margin-top:16px;" ++
-      "background:#315bd6;color:white;border:0;font-weight:700;cursor:pointer}button:disabled{" ++
+      "padding:11px;font:inherit;border:1px solid #ccd5e2;border-radius:7px}form button{" ++
+      "margin-top:16px;background:#315bd6;color:white;border:0;font-weight:700;cursor:pointer}" ++
+      ".scenario-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}" ++
+      ".scenario-button{margin:0;text-align:left;background:#f7f9fc;color:#17243b;" ++
+      "border:1px solid #d9e0ea;cursor:pointer}.scenario-button:hover{border-color:#315bd6;" ++
+      "background:#f0f4ff}.scenario-button strong,.scenario-button span{display:block}" ++
+      ".scenario-button span{margin-top:5px;color:#627087;font-size:.86rem;line-height:1.4}" ++
+      "button:disabled{" ++
       "opacity:.6;cursor:wait}.fills li{display:grid;grid-template-columns:1fr 1fr auto;" ++
       "gap:12px;padding:10px 0;border-bottom:1px solid #edf0f5;font-variant-numeric:tabular-nums}" ++
       ".fills small{color:#627087}.empty{color:#718096;padding:10px}#error{color:#a51c30;" ++
       "white-space:pre-wrap;overflow-wrap:anywhere;min-height:1.5em}#status{min-height:1.5em}" ++
       ".note{color:#56657c;font-size:.95rem;line-height:1.6}@media(max-width:760px){" ++
       "main{padding:16px}.market-grid{grid-template-columns:1fr}.panel{padding:15px}" ++
-      ".form-grid{grid-template-columns:1fr}.fills li{grid-template-columns:1fr auto}" ++
+      ".form-grid,.scenario-grid{grid-template-columns:1fr}.fills li{grid-template-columns:1fr auto}" ++
       ".fills small{grid-column:1/-1}}</style></head><body><main>" ++
       "<p><a href=\"/\">LeanWebStudy</a></p><h1>Limit Order Book / Matching Engine</h1>" ++
       "<p>指値注文を出し、価格優先・時間優先で自動マッチングする学習用デモです。</p>" ++
+      "<section class=\"panel\"><h2>注文流入シナリオ</h2>" ++
+      "<p class=\"note\">注文板を初期状態に戻し、複数の注文を順番に流入させます。</p>" ++
+      "<div class=\"scenario-grid\">" ++
+      "<button class=\"scenario-button\" type=\"button\" data-scenario=\"buyPressure\" " ++
+      "data-label=\"買い圧力シナリオ\"><strong>買い圧力</strong>" ++
+      "<span>買い指値が切り上がり、売り板を順に消化します。</span></button>" ++
+      "<button class=\"scenario-button\" type=\"button\" data-scenario=\"sellPressure\" " ++
+      "data-label=\"売り圧力シナリオ\"><strong>売り圧力</strong>" ++
+      "<span>売り指値が切り下がり、買い板を順に消化します。</span></button>" ++
+      "<button class=\"scenario-button\" type=\"button\" data-scenario=\"whipsaw\" " ++
+      "data-label=\"往復約定シナリオ\"><strong>往復約定</strong>" ++
+      "<span>買いと売りが交互に入り、上下の価格で約定します。</span></button>" ++
+      "<button class=\"scenario-button\" type=\"button\" data-scenario=\"buildDepth\" " ++
+      "data-label=\"板形成シナリオ\"><strong>板形成</strong>" ++
+      "<span>交差しない注文を重ね、売り買い両側の厚みを作ります。</span></button>" ++
+      "</div><p id=\"status\" role=\"status\">注文板を読み込んでいます…</p>" ++
+      "<p id=\"error\" role=\"alert\"></p></section>" ++
       "<section class=\"panel\"><h2>注文を出す</h2><form id=\"order-form\">" ++
       "<div class=\"form-grid\"><div><label for=\"side\">売買</label>" ++
       "<select id=\"side\" name=\"side\"><option value=\"buy\">買い (Bid)</option>" ++
@@ -276,8 +361,7 @@ def main : IO Unit :=
       "<div><label for=\"quantity\">数量</label>" ++
       "<input id=\"quantity\" name=\"quantity\" type=\"number\" min=\"1\" max=\"1000000\" " ++
       "step=\"1\" placeholder=\"例: 5\" required></div></div>" ++
-      "<button type=\"submit\">注文を送信</button></form><p id=\"status\" role=\"status\">" ++
-      "注文板を読み込んでいます…</p><p id=\"error\" role=\"alert\"></p></section>" ++
+      "<button type=\"submit\">注文を送信</button></form></section>" ++
       "<div class=\"market-grid\"><section class=\"panel book-panel\">" ++
       "<div class=\"book-header\"><h2>注文板</h2><p id=\"order-count\" class=\"note\"></p></div>" ++
       "<div class=\"column-labels\"><span>価格 (USD)</span><span>数量</span></div>" ++

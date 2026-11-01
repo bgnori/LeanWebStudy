@@ -343,6 +343,19 @@ def WebHandler.orderBookGetRoute (self : WebHandler) : Lithe.Handler := fun _ =>
   let response := Lithe.Response.json (orderBookJson (← self.orderBookSnapshot))
   pure (response.setHeader "Cache-Control" "no-store")
 
+def WebHandler.resetOrderBookRoute (self : WebHandler) : Lithe.Handler := fun context => do
+  let some host := context.req.header? "host"
+    | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let some origin := context.req.header? "origin"
+    | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  let allowedHosts := #[s!"127.0.0.1:{self.httpPort}", s!"localhost:{self.httpPort}"]
+  unless allowedHosts.contains host && origin == "http://" ++ host do
+    throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
+  self.orderBook.atomically do
+    set OrderBook.initial
+  pure ((Lithe.Response.json (orderBookJson OrderBook.initial))
+    |>.setHeader "Cache-Control" "no-store")
+
 def WebHandler.submitOrderRoute (self : WebHandler) : Lithe.Handler := fun context => do
   let some host := context.req.header? "host"
     | throw { status := 403, code := "invalid_origin", message := "request origin is not allowed" }
@@ -451,6 +464,7 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
     |>.get "/health" (self.healthRoute)
     |>.get "/api/query" (self.queryRoute)
     |>.get "/api/orderbook" (self.orderBookGetRoute)
+    |>.post "/api/orderbook/reset" (self.resetOrderBookRoute)
     |>.post "/api/orderbook/orders" (self.submitOrderRoute)
     |>.get "/chat-sse/events" (fun context => self.fallback context)
     |>.post "/chat-sse/send" (self.sseChatSendRoute)

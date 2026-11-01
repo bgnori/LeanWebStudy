@@ -55,6 +55,7 @@ Stop it with Ctrl+C.
 | `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /orderbook/` | Interactive limit order book and matching engine demo |
 | `GET /api/orderbook` | Current in-memory bids, asks, and recent trades |
+| `POST /api/orderbook/reset` | Reset the demo order book to its initial synthetic orders |
 | `POST /api/orderbook/orders` | Submit a limit order; match by price-time priority |
 | `GET /chat/endpoint` | WebSocket port metadata for the development preview |
 | `GET /health` | JSON health check |
@@ -82,6 +83,8 @@ handles reconnection. Both chat implementations are independent and local-only.
 The order book starts with synthetic bids and asks, matches crossing limit
 orders by price then order ID (FIFO), and keeps the latest 20 trades in memory.
 Prices are accepted to two decimal places and quantities are whole numbers.
+Its page includes repeatable buy-pressure, sell-pressure, whipsaw, and
+depth-building scenarios; each resets the book before submitting its sequence.
 It is a single, unauthenticated learning demo with no balances, cancellation,
 or persistence; do not use it for real trading.
 The HTTP adapter preserves Lithe's Content-Type without adding another:
