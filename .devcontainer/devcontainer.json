@@ -1,0 +1,19 @@
+{
+  "name": "LeanWebStudy",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "runArgs": [
+    "--cpus=2",
+    "--memory=4g",
+    "--memory-swap=4g"
+  ],
+  "postCreateCommand": "lake update",
+  "forwardPorts": [8080, 18080],
+  "customizations": {
+    "vscode": {
+      "extensions": ["leanprover.lean4"]
+    }
+  }
+}

@@ -14,6 +14,18 @@ For definitions and classifications of project, web, and Lean terminology, see t
 - Linux with a C compiler, SQLite and libwebsockets development libraries. On Debian/Ubuntu:
   `sudo apt-get install build-essential libsqlite3-dev libwebsockets-dev`.
 
+## VS Code Dev Container
+
+To keep development builds from using all of the host's resources, open this
+repository in its Dev Container. The container is limited to 2 CPUs and 4 GiB
+of memory, with no additional swap. Its image includes the pinned Lean
+toolchain and the system build prerequisites; `lake update` runs after the
+container is created. The preview ports 8080 and 18080 are forwarded.
+
+These Docker resource limits apply when the Dev Container is run by a
+Docker-compatible local environment. If a build runs out of memory, adjust the
+`runArgs` limits in `.devcontainer/devcontainer.json`.
+
 HTTP serving uses `Std.Async` and `Std.Http.Server`; [Lithe](https://github.com/JoshuaPurtell/lithe)
 provides route registration and dispatch. The optional Lithe Rust server shim is
 not used. Mathlib is not needed. MapleSQL is pinned to a Git commit and built
