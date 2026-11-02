@@ -9,6 +9,8 @@
 前提: [問題定義・設計方針](./websocket-lifetime-design.md)、
 [依存先契約](./websocket-dependency-contracts.md)、
 [動作方針と既存慣習の調査](./websocket-behavior-policy.md)。
+コンベンションの参照は実装可能性を必須条件とし、Lean本体（Init・Std）を最優先、
+次にws-leanと他言語の主要実装を同程度、その後に他の限定的な実装とする。
 定理ID S1〜S6・R1・B1・L1は設計方針第8.3節に対応する。
 
 ## 1. 比較するもの
