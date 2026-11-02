@@ -5,7 +5,8 @@
 
 関連: [実装評価](./websocket-evaluation.md)、
 [接続移譲API](./std-websocket-extension.md)、
-[依存先契約と証明の前提調査](./websocket-dependency-contracts.md)。
+[依存先契約と証明の前提調査](./websocket-dependency-contracts.md)、
+[三つのモデル案と比較](./websocket-model-proposals.md)。
 
 ## 1. 問題定義
 
