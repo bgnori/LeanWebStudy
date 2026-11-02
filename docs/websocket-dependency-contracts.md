@@ -212,7 +212,131 @@ native shutdownは重複要求を拒否するフラグを持ち、完了までso
 これを「LeanでTCPメモリ安全性を証明済み」と言い換えない。
 仮定をPropとして渡すことは、その仮定の実世界での成立を証明することではない。
 
-## 7. 次の作業と判断ゲート
+## 7. Std.Httpのpersistent connection管理
+
+Lean 4.35.0の**サーバー側HTTP/1.x**のソースを追跡した結果。
+クライアントの接続プール、HTTP/2、TCP keepaliveの調査ではない。
+この節はソース上の確認（S）であり、各ケースを新たに実行検証した結果ではない。
+
+### 7.1 再利用の単位は「接続ごとの状態機械」
+
+`Server.serve` は接続を受理すると、その接続用の `serveConnection` を起動する。
+`Connection.handle` は同じsocketと `H1.Machine .receiving` を保持し、次を反復する:
+
+1. `machine.step` で読み取り・書き込みの状態を進める。
+2. 生成された出力を `Transport.sendAll` で送信完了まで待つ。
+3. ヘッダ完了・要求完了・失敗等のイベントを処理する。
+4. ハンドラーをタスクとして起動し、結果をチャネルで受け取る。
+5. socket、要求bodyへの関心、応答body、ハンドラー結果、キャンセル等をselectする。
+
+通常のHandlerにはsocketを渡さず、要求bodyと応答bodyを介して通信する。
+**HTTP本体は接続操作を単一ループに集約している**ので、
+ハンドラー同士が直接socketへ競合して書く構造ではない。
+ただし、任意に生成した子タスク全体のjoinや、無条件の終了時間保証を意味しない。
+根拠: [Connection.lean:309](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L309)、
+[Connection.lean:468](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L468)。
+
+### 7.2 接続を継続するかの判定
+
+| 条件 | 実装上の扱い |
+|---|---|
+| `Config.enableKeepAlive` | 既定true。状態機械のkeepAlive初期値になる |
+| HTTP/1.1 | `Connection: close` がなければ継続候補 |
+| HTTP/1.0 | `Connection: keep-alive` があれば継続候補 |
+| 不正なConnectionヘッダ | `shouldKeepAlive` はfalseを返す |
+| 応答側のConnection方針 | 要求側と同様にkeepAliveの更新に反映する |
+| 要求数の上限 | `maxRequests` 既定100がH1の `maxMessages` へ渡り、上限に達する応答では継続を止める |
+| close-delimited body | 境界がEOFに依存するので継続を止める |
+| HTTP/1.0でサイズ不明の応答body | chunkedを使わず接続終了によるframingへ切り替え、継続を止める |
+
+`updateKeepAlive` は `old ∧ condition` なので、同じ接続で一度falseになった方針を
+後からtrueには戻さない。応答ヘッダは状態機械がConnection値を整理し、
+継続しない場合は `Connection: close`、HTTP/1.0の継続時は `keep-alive` を付ける。
+根拠: [Message.lean:113](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1/Message.lean#L113)、
+[H1.lean:208](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L208)、
+[H1.lean:690](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L690)、
+[H1.lean:711](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L711)。
+
+### 7.3 次の要求へ移る境界とbodyの後始末
+
+単に「応答ヘッダを送ったら次の要求へ進む」わけではない。
+readerとwriterの完了を見て `resetForNextMessage` し、`.next` イベントを出す。
+未消費の入力と既に生成した出力は保持し、要求数を増やし、要求ごとのreader/writer状態を
+初期化する。サーバーループも古いbody streamを閉じ、新しい要求stream・応答チャネルを
+作り直す。
+
+応答を送り終えた後に要求bodyが残っている場合、`drainBodyInternally` により
+状態機械がbodyを内部で消費する。これにより、残りのbodyを次の要求ヘッダと誤認しない。
+bodyが揃わなければ入力を待つ必要があり、無条件に次の要求へ進めるわけではない。
+
+入力に複数要求が先行して含まれるpipeliningを扱えるが、ここで確認した処理は、
+接続上で要求・応答の境界を順に進めるもの。同じ接続の複数要求ハンドラーを並列に起動し、
+後から応答順を並べ替える構成ではない。
+根拠: [H1.lean:404](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L404)、
+[H1.lean:593](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L593)、
+[H1.lean:1054](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L1054)、
+[Connection.lean:272](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L272)。
+
+### 7.4 タイムアウトは段階別。ただし万能のdeadlineではない
+
+| 段階 | 既定値・扱い |
+|---|---|
+| 初回入力待ち／要求間のidle | `keepAliveTimeout = 12000ms`。期限で `.close` を選びループ終了へ進む |
+| idle後の最初のバイト受信からヘッダ完了まで | `headerTimeout = 5000ms` の絶対時刻を設定。受信のたびに期限を延長する方式ではない |
+| ヘッダ完了後の入力待ち等 | `currentTimeout` を `lingeringTimeout = 10000ms` に切替 |
+| ヘッダ等のtimeoutイベント | `closeWithError 408`。既に応答に着手している場合はwriterを閉じる経路になる |
+| サーバーのキャンセル | `closeWithError 503`。状態に応じエラー応答またはreader/writer終了へ進む |
+
+重要な制限として、これらのsocket待機用タイマーは `pollNextEvent` にsocketが
+含まれる場合にだけ登録される。ハンドラー結果だけを待つ場面では、その待機に
+自動で10秒のdeadlineがかかるとは限らない。
+また `Transport.sendAll` 自体はこのselectの外で待機するので、
+pending write中のshutdown・送信タイムアウトをこのタイマーが強制的に処理するわけではない。
+応答body等の別イベントでpollへ再入すれば相対タイマーも作り直される。
+したがって「すべての要求が10秒以内に終了する」「shutdownは必ず一定時間内に終わる」
+という契約には読み替えない。
+根拠: [Connection.lean:99](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L99)、
+[Connection.lean:353](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L353)、
+[Connection.lean:439](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L439)。
+
+### 7.5 論理的な終了と物理的な解放の区別はHTTPにもある
+
+`H1.Machine.halted` はreaderとwriterがclosedで、出力バッファが空であることを判定する。
+ループ終了時はbody streamを閉じ、`Transport.close socket` を呼ぶ。
+標準TCPではC6で確認した通りno-opであり、socketのfinalizerに解放を委ねる。
+通常HTTPではアプリにsocketを渡さず、selectの後始末もあるため、
+ループが終わり参照が不要になればfinalizerによる回収へ進める構成である。
+ただし「全native資源の解放完了通知」を待つAPIではない。
+
+`Server` の接続上限は既定1024。接続処理から戻る際の `finally` でpermitを返し、
+active counterを減らす。acceptループ自身も同じcounterで追跡されるため、
+これは厳密には純粋な「開いているFD数」ではない。
+`shutdownAndWait` はキャンセル後、この管理対象が終了して通知するのを待つ。
+各FDのclose callback完了や、アプリが独立に起動した全タスクの終了を数えてはいない。
+根拠: [H1.lean:523](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Protocol/H1.lean#L523)、
+[Connection.lean:529](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L529)、
+[Server.lean:135](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server.lean#L135)。
+
+### 7.6 WebSocket設計への含意
+
+**Std.Httpが接続の寿命を考えていない、という理解は修正すべきである。**
+HTTPの要求境界、単一の接続ドライバー、bodyの消費、再利用可否、idle期限、管理対象の
+終了という仕組みが既にある。一方、それは任意の双方向プロトコルの終了保証ではない。
+
+| HTTP本体が持つ仕組み | upgrade後に拡張側が引き受けること |
+|---|---|
+| reader/writer完了後の `.next` | メッセージ・Close・保留I/Oを含む独自の状態遷移 |
+| socketへ書く単一の接続ループ | 複数send、受信由来の自動pong/Closeをまとめる所有タスク |
+| HTTP bodyの明確な境界と内部drain | WebSocketのフレーム境界と、終了時の受付・排出方針 |
+| keep-alive idle/headerのselect | WebSocket用のidle、shutdown、完了待機の多重化 |
+| HTTP処理の終了counter | 接続操作権の失効と終了通知の意味を明確にする |
+
+従って、単一所有タスク案はStdの方針を捨てるというより、
+**HTTPドライバーが担っていた責務を、upgrade後のプロトコル用に再構成する案**
+と位置付けるのが自然である。native強制終了能力の不足はHTTPにも残る別問題なので、
+HTTPから継承してよい契約と、新たに必要な契約を分けて扱う。
+
+## 8. 次の作業と判断ゲート
 
 1. この台帳を基に、公開APIだけで実現する保証と、backendの追加能力が必要な保証を決める。
    **全資源の強制回収を必須にするなら、能力不足を解決する前に終了モデルを確定しない。**
