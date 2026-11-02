@@ -112,7 +112,9 @@ The development preview tunnels `/chat/socket`, `/chat-ws/socket`,
 and `/pong/socket` through its stable port. Pong exchanges paddle positions and
 the player-1-authoritative ball state over WebSocket; open `/pong/` in two tabs
 or devices to play. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
-for setup, limits, reconnection behavior, and local-only restrictions.
+for setup, limits, reconnection behavior, and local-only restrictions, and the
+[WebSocket risk/return and cost/return report (Japanese)](docs/websocket-risk-return-report.md)
+for the analysis distilled from these implementations.
 The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
 updates and POST for sending; its latest 50 messages are in-memory and EventSource
 handles reconnection. All three chat implementations are independent and local-only.

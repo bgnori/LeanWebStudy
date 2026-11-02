@@ -1,5 +1,8 @@
 # WebSocket チャットの技術選定と使い方
 
+実装を通して得られた知見のリスク・リターン / コスト・リターン分析は
+[websocket-risk-return-report.md](./websocket-risk-return-report.md) を参照。
+
 ## 要件と既存構成
 
 2026-10-31 に調査。チャットの送受信は POST/GET やポーリングではなく、
