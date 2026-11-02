@@ -2,11 +2,18 @@
 
 2026-11-02作成。状態は**設計案**。ここに記す保証は現在の実装が満たすと確認された
 性質ではなく、これから実装・検証する目標である。今回はコードを変更しない。
+モデル構成はB（直積状態・操作台帳）を本体とし、Cの最小の保持不変条件を取り込む方針を採用した。
+具体的な動作契約は、既存慣習と実装可能性の比較を経て別途確定する。
+正常closeでの受理済みデータ排出、ピアClose・障害・abortでの未着手取消、
+取消・期限とI/O停止・回収完了の区別は合意済み。
+公開APIの分離は保留し、サーバー全体だけでなくTransport・connectionの終了契約との
+整合を優先する。下位の能力と完了の意味を対応付けてから、実行器の設計を確定する。
 
 関連: [実装評価](./websocket-evaluation.md)、
 [接続移譲API](./std-websocket-extension.md)、
 [依存先契約と証明の前提調査](./websocket-dependency-contracts.md)、
-[三つのモデル案と比較](./websocket-model-proposals.md)。
+[三つのモデル案と比較](./websocket-model-proposals.md)、
+[動作方針と既存慣習の調査](./websocket-behavior-policy.md)。
 
 ## 1. 問題定義
 
