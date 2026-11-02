@@ -98,6 +98,8 @@ HTTP接続継続性、突然切断まで24ケースをPython標準ライブラ�
    native資源の生存を別々に検証する必要がある。
    問題定義、証明対象、対応方針を
    [WebSocketの終了・寿命管理設計](./websocket-lifetime-design.md)にまとめた。
+   [依存先契約と証明の前提調査](./websocket-dependency-contracts.md)では対応版のnativeソースと
+   libuv契約を確認し、寿命保持の実装根拠と、強制終了・進行性の不足を分けて記録した。
 3. ⚪ UTF-8検証がメッセージ完成時のみ(インクリメンタルでない)。RFC準拠だが、
    Autobahnの厳格なfail-fastケース(6.x系)では「可能な限り早く失敗」が期待される。
 

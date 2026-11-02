@@ -4,7 +4,8 @@
 性質ではなく、これから実装・検証する目標である。今回はコードを変更しない。
 
 関連: [実装評価](./websocket-evaluation.md)、
-[接続移譲API](./std-websocket-extension.md)。
+[接続移譲API](./std-websocket-extension.md)、
+[依存先契約と証明の前提調査](./websocket-dependency-contracts.md)。
 
 ## 1. 問題定義
 
@@ -37,8 +38,11 @@ upgrade後に複数タスクから操作できるようにしたことで、拡�
 
 非同期native I/O完了までのsocket・バッファ保持、finalizerとの競合、
 FD再利用への対処は、native実装まで確認する必要がある。
-ローカルツールチェーンに該当nativeソースがなかったため、先の調査では未確認。
-必要なら対応バージョンの公開ソースと実行時テストで追跡する。
+当初はローカルツールチェーンに該当nativeソースがなく未確認だった。
+後続の[依存先契約調査](./websocket-dependency-contracts.md)で対応版の公開ソースを取得し、
+送信中のsocket・バッファ保持、受信中の参照保持、finalizerのclose callbackでの解放を
+確認した。実行環境のlibuv版も1.48.0と測定した。ただしnative全体の形式検証や、
+全異常経路・FD再利用・実行バイナリとの完全な対応の検証は未実施である。
 **メモリ破壊・別接続への誤送信・不正読み出しは実証されていないが、
 Lean側の参照保持だけでnative境界まで安全と断定もしない。**
 
@@ -129,6 +133,10 @@ Leanに一般的な線形所有権の強制があることを前提にせず、
 native呼び出しは明確な境界に閉じ込め、信頼する仕様を列挙する。
 
 ## 6. Transportに求める契約と検証
+
+先に[依存先契約の台帳](./websocket-dependency-contracts.md)のC1〜C7とA1〜A8を参照する。
+特に `Client.shutdown` はwrite側の半閉鎖、`uv_cancel` はTCP writeの汎用中断ではない。
+タイムアウトを設けたことだけで、保留I/Oの完了・解放可能性を仮定しない。
 
 現在の `Transport.close` を強制中断と同一視せず、以下の能力が必要かを検討する:
 
