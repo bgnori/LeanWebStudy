@@ -28,6 +28,8 @@ require lithe from git
 require «ws-lean» from git
   "https://github.com/pb64-lean/ws-lean" @ "2a6665a120993533122bcbfa076ef35c17025bea"
 
+lean_lib StdExt
+
 lean_lib LeanWebStudy
 
 target sqlite.o pkg : System.FilePath := do

@@ -65,6 +65,7 @@ Stop it with Ctrl+C.
 | `GET /chat-sse/` | SSE chat page (server events + HTTP POST messages) |
 | `GET /chat-sse/events` | Server-Sent Events chat stream |
 | `POST /chat-sse/send` | Validate and broadcast a chat message |
+| `GET /ws-echo/socket` | WebSocket echo on the HTTP port (StdExt upgrade API) |
 | `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /orderbook/` | Interactive limit order book and matching engine demo |
 | `GET /cat/` | IRT 3PL computerized adaptive testing demo with 30 SQLite items and 10 adaptive questions |
@@ -118,6 +119,12 @@ for the analysis distilled from these implementations.
 The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
 updates and POST for sending; its latest 50 messages are in-memory and EventSource
 handles reconnection. All three chat implementations are independent and local-only.
+The `StdExt` library prototypes the report's main proposal: an upgrade/handoff
+API for `Std.Http.Server` plus an RFC 6455 WebSocket layer on top of it. The
+`/ws-echo/socket` endpoint runs over this API on the same port as the HTTP
+server (no port discovery or tunnel needed) and is covered by
+`tests/test_ws_std.py`. See the
+[StdExt design notes (Japanese)](docs/std-websocket-extension.md).
 The order book starts with synthetic bids and asks, matches crossing limit
 orders by price then order ID (FIFO), and keeps the latest 20 trades in memory.
 Prices are accepted to two decimal places and quantities are whole numbers.

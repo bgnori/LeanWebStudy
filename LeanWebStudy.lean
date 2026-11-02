@@ -17,6 +17,7 @@ import Lithe.Runtime.Dispatch
 import Lithe.Core.Context
 import Lithe.Extractor.Form
 import Std.Http.Server
+import StdExt
 import Std.Sync.Mutex
 
 namespace LeanWebStudy
@@ -931,5 +932,37 @@ instance : Server.Handler WebHandler where
         Lithe.dispatch self.router (Lithe.RequestCtx.ofRequest litheRequest))
       WebHandler.toHttpResponse response
   onFailure _ error := IO.eprintln s!"HTTP transport failure: {error}"
+
+/--
+Echo loop for the `/ws-echo/socket` demo endpoint: every received text or
+binary message is sent back unchanged until the peer closes.
+-/
+def WebHandler.wsEchoLoop (socket : WebSocket.WebSocket) : Std.Async.Async Unit := do
+  let mut running := true
+  while running do
+    match ← socket.recv with
+    | some (.text content) => socket.sendText content
+    | some (.binary content) => socket.sendBinary content
+    | none => running := false
+
+/--
+Origin policy for the demo endpoint: browser requests must come from this
+server's own HTTP origin; non-browser clients (no Origin header) are allowed.
+-/
+def WebHandler.wsEchoOrigin (self : WebHandler) : Option String → Bool
+  | none => true
+  | some origin =>
+    origin == s!"http://127.0.0.1:{self.httpPort}" ||
+      origin == s!"http://localhost:{self.httpPort}"
+
+instance : Server.UpgradableHandler WebHandler where
+  ResponseBody := Body.Any
+  onRequest self request := do
+    if toString request.line.uri.path == "/ws-echo/socket" then
+      WebSocket.upgrade request.line WebHandler.wsEchoLoop
+        { checkOrigin := self.wsEchoOrigin }
+    else
+      .normal <$> Server.Handler.onRequest self request
+  onFailure self error := Server.Handler.onFailure self error
 
 end LeanWebStudy

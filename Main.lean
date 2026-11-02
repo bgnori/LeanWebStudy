@@ -28,7 +28,7 @@ def main (args : List String) : IO Unit := do
   let handler := LeanWebStudy.WebHandler.create counter database orderBook pages sseChat
     port.toUInt16 chatPort wsChat.port
   Std.Async.Async.block do
-    let server <- Std.Http.Server.serve
+    let server <- Std.Http.Server.serveUpgradable
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
       handler
     IO.println s!"Listening on http://127.0.0.1:{port}"
@@ -37,6 +37,7 @@ def main (args : List String) : IO Unit := do
     IO.println s!"ws-lean chat: ws://127.0.0.1:{wsChat.port}/chat-ws/socket"
     IO.println s!"WebSocket Pong: ws://127.0.0.1:{chatPort}/pong/socket"
     IO.println s!"SSE chat: http://127.0.0.1:{port}/chat-sse/"
+    IO.println s!"WebSocket echo (same port, StdExt upgrade API): ws://127.0.0.1:{port}/ws-echo/socket"
     discard <| Std.Async.Async.concurrently server.waitShutdown
       (Std.Async.Async.concurrently (LeanWebStudy.WsChat.run wsChat)
         (Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated)
