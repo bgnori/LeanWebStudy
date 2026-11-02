@@ -128,6 +128,38 @@ def echoLoop (socket : WebSocket.WebSocket) : Async Unit := do
 `Std.Http.Config.maxConnections`(HTTP と共有)が適用される。アイドル
 タイムアウトと Ping 送出の周期はアプリケーション責務のまま(§5)。
 
+### 3.1 Originポリシーの設定
+
+**注意: `UpgradeOptions.checkOrigin` と `checkHandshake` の省略時引数は全許可。**
+Cookie等の暗黙の認証情報を利用するアプリは、ブラウザからのクロスサイト接続を防ぐため、
+信頼するページのOriginを明示的に制限する。通常のCORS設定だけでは代替できない。
+Origin検証は認証・認可の代わりではなく、非ブラウザクライアントによる偽装も防がない。
+
+現行APIで固定allowlistを適用する例（値は実際の公開URLに置き換える）:
+
+```lean
+def trustedOrigin : Option String → Bool
+  | some origin => origin == "https://app.example.com"
+  | none => false
+```
+
+これを `WebSocket.upgrade` の `{ checkOrigin := trustedOrigin }` として渡す。
+この例はOrigin欠落も拒否するブラウザ専用の設定。CLI等の欠落を許可する場合は
+`none` の扱いを明示的に変え、別途認証する。文字列 `"null"` は欠落とは区別し、
+原則として許可しない。
+
+デモはすでに `WebHandler.wsEchoOrigin` を設定し、ローカルのHTTP Origin二つと
+Origin欠落だけを許可している。TLS終端やCodespaces転送先で使う場合は、
+内部のlocalhostではなく実際の外部Originを設定する。転送ヘッダを無条件に信頼したり、
+共有プレビュー用ドメイン全体を許可したりしない。
+
+全許可維持・必須設定・全拒否・same-origin等の選択肢、欠落時の方針、
+互換性とプロキシのトレードオフは
+[評価レポートのOriginポリシー比較](./websocket-evaluation.md#originポリシーの選択肢とトレードオフ)
+と[Lean・他言語の設計方針との比較](./websocket-evaluation.md#外部視点-lean-4の設計スタイルと他言語のライブラリ)
+を参照。低レベルのプロトコル核とアプリ向けの安全な入口は分けて評価し、
+ポリシー必須化を全層の前提とはしない。現時点では既定値やAPIの挙動を変更していない。
+
 ## 4. テスト
 
 - **Lean 単体テスト**([LeanWebStudyTests.lean](../LeanWebStudyTests.lean)):

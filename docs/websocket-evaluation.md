@@ -123,10 +123,212 @@ HTTP接続継続性、突然切断まで24ケースをPython標準ライブラ�
 1. **対応済み**: `closeFrame` のUTF-8境界バグ修正と、123バイト超の
    マルチバイトreasonを含む回帰テスト追加
 2. `UpgradeOptions.checkOrigin` のデフォルト全許可について、
-   `docs/std-websocket-extension.md` とdocstringに警告を明記
-   (またはOriginヘッダ存在時はsame-origin要求をデフォルトに)
+   下記「Originポリシーの選択肢とトレードオフ」を踏まえて方針を選ぶ。
+   調査と利用ガイドへの警告追加は実施済み。APIの既定値変更は未実施。
 3. WS層のアイドルタイムアウト(または定期ping)オプションの追加
 4. 余力があれば Autobahn Testsuite での準拠検証と `applyMask` のワード単位化
+
+## Originポリシーの選択肢とトレードオフ
+
+2026-11-02 調査。以下は設計判断のための比較であり、実装変更ではない。
+
+### 現状と防御の範囲
+
+- [WebSocket.lean](../StdExt/Http/WebSocket.lean) の `UpgradeOptions.checkOrigin` と、
+  直接呼び出せる `checkHandshake` の省略時引数は、どちらも `fun _ => true`。
+  コールバックが受け取るのは `Option String` だけで、HostやTLS情報ではない。
+  拒否すると101に切り替える前に403を返す。
+- 一方、[デモの `WebHandler.wsEchoOrigin`](../LeanWebStudy.lean) は明示設定済みで、
+  `http://127.0.0.1:<httpPort>` と `http://localhost:<httpPort>` のみを許可する。
+  Origin欠落は許可し、文字列 `"null"` や外部Originは拒否する。
+  **ライブラリ既定値の問題と、デモの現在の挙動は区別する必要がある。**
+- ブラウザのWebSocket接続は通常のCORSプリフライトによる許可を必要としない。
+  Cookie等の暗黙の認証情報が送られる構成でOriginを制限しないと、攻撃者のページから
+  認証済み接続を開かれるCSWSHのリスクがある。CookieのSameSite属性は補助策だが、
+  same-siteとsame-originは異なるため、Origin検証の代用にはならない。[1][3]
+- Originはブラウザ上のスクリプトを制限するための情報であり、クライアント認証ではない。
+  非ブラウザクライアントは偽装・省略できる。認証、メッセージ単位の認可、
+  接続上限、TLSは別途必要。RFC 6455 §10.2もこの境界を明記する。[1]
+
+### 基本方針の比較
+
+Origin欠落を許可するかは、下記の基本方針とは別に決定する。
+
+| 選択肢 | 利点 | 欠点・トレードオフ | 現行APIでの実現 |
+|---|---|---|---|
+| A. 全許可を維持し、警告・例を追加 | 後方互換。公開データ配信や多様な非ブラウザクライアントに使いやすい | 設定忘れを防げない。Cookie認証等を後付けした際にも危険を引き継ぐ | 変更不要 |
+| B. ポリシー指定を必須にする | 利用者に信頼境界の判断を必ず要求できる。全許可も明示的な選択になる | ソース互換性を壊す。明示的に全許可を選んだ場合の安全性までは保証しない | `UpgradeOptions` と `checkHandshake` の既定値をともに見直す必要あり |
+| C. 未設定は全拒否、allowlistを設定して開放 | fail-closed。誤設定で公開するより停止を選べる。scheme・host・portを限定できる | 初回設定が必須。CLI等も欠落許可を設定しない限り拒否。環境ごとの設定管理が必要 | 全拒否や固定allowlist自体は現行コールバックで可能。既定値変更は破壊的 |
+| D. same-originを既定にする | 同一サイト構成で設定忘れを減らせる | 別ドメインのフロントエンドやプロキシ構成に例外が必要。外部scheme・host・portの信頼できる取得が難しい | 外部Originを設定値として閉じ込めれば可能。リクエストから自動導出するにはAPI拡張が必要 |
+| E. ホスト単位・サブドメイン単位の許可 | 多数のテナントやプレビュー環境をまとめて扱いやすい | 別scheme・portや、管理外・乗っ取られたサブドメインまで信頼しやすい。完全なsame-originより広い | コールバックで可能だが、構文解析とホスト境界の厳密な判定が必要 |
+
+allowlistはBやCと組み合わせる代表的な実装方法。まずは設定済みの完全なOriginへの
+一致を優先し、部分文字列一致や無制限のワイルドカードは避ける。[3]
+
+### Origin欠落・`null`・不正値
+
+| 入力 | 許可する理由 | 拒否する理由・推奨する扱い |
+|---|---|---|
+| Originヘッダなし (`none`) | CLI・サーバー間接続との互換性。RFCは非ブラウザ接続を排除する目的ではない | ブラウザ専用なら拒否が明快。許可しても「信頼済みクライアント」の証明ではなく、別の認証が必要 |
+| `Origin: null` (`some "null"`) | opaque originの文脈（例: 一部のsandbox）への対応が必要な場合 | 欠落とは別物。複数の信頼できない文脈が同じ値になるため、原則拒否し、必要なら限定用途として明示設計する |
+| 不正構文・複数Origin・重複ヘッダ | 正常なブラウザ利用で受け入れる利点はない | 拒否する。自動選択・部分一致で許可しない。重複ヘッダの扱いはHTTPヘッダ層も含めて検証が必要 |
+
+Originの通常形は `scheme://host[:port]` であり、パスを含まない。`wss://` の接続を
+開始したページのOriginは通常 `https://` である。比較にはscheme・host・実効portを
+使い、既定port、省略形、ホストの大文字小文字、IPv6、国際化ドメインの扱いを決める。
+固定allowlistでシリアライズ済みの値を完全一致させる方法は単純で保守的だが、
+同値な別表記を拒否する場合がある。URL解析を導入する場合も、不正値を緩く補正して
+許可しない。[2]
+
+### TLS終端・リバースプロキシ・Codespaces
+
+- 外部の `https://app.example` が内部の `http://localhost:8080` に転送される場合、
+  内部アドレスからのsame-origin推定では正当な接続を拒否してしまう。
+  固定された**外部Originのallowlist**なら、TLS情報を追加取得せず現行APIで扱える。
+- `Host` だけとの一致はschemeまで確認するsame-originとは異なる。
+  Hostを利用するなら許可ホストの検証も必要で、任意の受信Hostを信頼基点にしない。
+  `Forwarded` / `X-Forwarded-Host` / `X-Forwarded-Proto` を使う場合は、
+  信頼するプロキシを限定し、外部からの偽装ヘッダを境界で除去する。
+- Codespacesの転送先はローカルのOriginとは異なる。現在のデモの固定ローカルOrigin
+  ポリシーでは、転送URL上のページからの接続は許可されない。対応するなら、その環境の
+  **具体的な外部Origin**を設定に追加する。共有プレビュー用ドメイン全体の許可は、
+  他の利用者のページまで信頼することになるので避ける。
+
+### 先行実装から得られる示唆
+
+| 実装・ガイド | 確認できた方針 | このAPIへの示唆 |
+|---|---|---|
+| Gorilla WebSocket `Upgrader` | `CheckOrigin` 未設定時、Originが存在し、そのhostがリクエストHostと異なると拒否。欠落は許可 [4] | 安全寄りの既定値と非ブラウザ互換性を両立。ただし完全なscheme込みsame-originと呼ばない |
+| Python `websockets` | `serve` の `origins` 既定値は `None`。Originの制限は明示設定でき、allowlist要素の `None` で欠落許可を指定する [5] | ポリシー本体と「Origin欠落許可」を分離すると意図を表現しやすい |
+| Django Channels | `OriginValidator` による許可集合、`AllowedHostsOriginValidator` による既存の `ALLOWED_HOSTS` 設定の再利用 [6] | アプリの信頼する公開ホスト設定を一元化できる。ただしmiddlewareの明示的な組み込みが必要 |
+| OWASP | 全ハンドシェイクで明示的なOrigin allowlistによる検証を推奨 [3] | Cookie認証を伴うアプリの標準的な選択肢としてallowlistを優先する |
+
+### 本リポジトリへの推奨と変更時の確認項目
+
+1. **互換性を維持する段階**ではAとして全許可の警告を明記し、デモの明示的ポリシーは
+   維持する。外部公開時は完全な外部Originのallowlistを設定する。
+2. **アプリ向けの安全な入口ではB（ポリシー必須化）が候補**。汎用ライブラリには
+   公開OriginやTLS終端の知識がなく、呼び出し側に判断を要求する利点がある。
+   ただし、これを低レベルAPIまで一律に適用するのがLeanや他言語の標準的な方針と
+   確認できたわけではない。下記の外部比較を踏まえ、基盤層とアプリ向け入口を分けて
+   判断する。空の設定で安全側に停止させる設計ならCも候補となる。
+3. Cookie認証を使うブラウザ専用アプリはallowlist外・欠落・`null`を拒否する。
+   CLI混在なら欠落許可を独立に選び、別の認証を必須にする。全許可を選ぶ用途でも、
+   ローカルネットワークへの到達性や副作用を含めて公開してよいか確認する。
+4. 実装時は `UpgradeOptions` と `checkHandshake` の両経路、デモ、利用例、
+   拒否時403と接続継続、移行ガイドをそろえる。既定値変更は意図的な互換性変更として扱う。
+5. テストには許可Origin、外部Origin、scheme/port違い、欠落、`null`、不正値・重複、
+   既定port・IPv6等の採用した比較規則、信頼するプロキシ経由と転送ヘッダ偽装を含める。
+   現在の外部Origin拒否・ローカルOrigin許可テストだけでは、新しい方針全体の検証には足りない。
+
+### 参照資料
+
+すべて2026-11-02参照。先行実装の記述は参照時点の公開ドキュメントに基づく。
+
+1. [RFC 6455 §10.2: Origin Considerations](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.2)
+2. [RFC 6454 §6.2: ASCII Serialization of an Origin](https://www.rfc-editor.org/rfc/rfc6454.html#section-6.2)
+3. [OWASP WebSocket Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html)
+4. [Gorilla WebSocket: Origin Considerations](https://pkg.go.dev/github.com/gorilla/websocket#hdr-Origin_Considerations)
+5. [Python websockets: Server (asyncio)](https://websockets.readthedocs.io/en/stable/reference/asyncio/server.html)
+6. [Django Channels: Security](https://channels.readthedocs.io/en/latest/topics/security.html)
+
+## 外部視点: Lean 4の設計スタイルと他言語のライブラリ
+
+### 調査範囲と事実・提案の区別
+
+2026-11-02追記。上の比較は、この実装を安全に運用するための内向きの判断だった。
+ここでは「どの層のライブラリとして自然か」「upstreamへの提案として何を説明するか」
+を別の評価軸とする。
+
+Leanについては本プロジェクトのツールチェーン **Lean 4.35.0の `Std.Http` 実装**と
+公式の貢献ガイドを参照する。他言語は公式ドキュメントと公開ソースを参照する。
+以下のLeanへの適合性や採用案は、それらからの**本レポートの推論**であり、
+Lean開発者の承認済み方針やWebSocketの公式ロードマップを示すものではない。
+また、他言語の既定値の紹介はその安全性を無条件に推奨するものではない。
+
+### Lean 4 / Std.Httpから読み取れる方向性
+
+| 観点 | 既存実装で確認できる事実 | 今回のWebSocket APIへの含意 |
+|---|---|---|
+| 不変条件を型に持たせる | `Header.Name` は文字列の妥当性と小文字化の証明、`Header.Value` はヘッダ値の妥当性の証明を持つ。動的入力は `ofString?` で検証して構築する [L1][L2] | Origin構文と「アプリが信頼するOriginか」は別問題。将来は検証済みOrigin型が自然な候補だが、その型だけで信頼性を保証したとは言えない |
+| 型と実行時検証の併用 | `Config.keepAliveTimeout` は正値の部分型。他のサイズ上限は `Nat` と既定値で表す [L3] | Leanだからすべてを証明付きにする必要はない。受信フレームの実行時検証や、ポリシーを関数で渡す現在の方式も整合的 |
+| アプリの判断は必須コールバックで渡す | `Handler.onRequest` は必須。`onContinue` は既定で許可、`onFailure` は既定で何もしない。`StatelessHandler` と `Handler.ofFn` が簡便な入口を提供する [L4] | 必須引数も許可的な既定値も先例がある。「LeanのスタイルだからOrigin全拒否／必須化」とは結論できない |
+| 資源防御は基盤にも置く | `Config` は接続数1024、ヘッダ受信5秒、ヘッダ64KiB等の上限を既定で持ち、無制限化には警告がある [L3] | プロトコル上限をライブラリで守る現在の設計は合う。ただし一律に決められる資源制限から、配備先依存のOrigin allowlistは導出できない |
+| 設定構造体と層間変換 | サーバーの `Config.toH1Config` はHTTP処理層の設定へ変換する [L3] | `Upgraded`、フレーム、メッセージ、WebSocket upgradeの層分離は方向性に合う。配備先のHost/TLS/認証情報をフレーム層へ流し込む理由はない |
+| upstreamの判断基準 | 貢献ガイドは機能提案をRFC issueから始め、利用者・保守性・UXを説明し、既存機能の再利用、テスト、ドキュメント、性能を求める [L5] | 「他言語にある」「Leanで書いた」だけでは採用根拠にならない。汎用upgrade primitiveとWebSocketの提案範囲、ループ複製を解消する変更面を説明すべき |
+
+この意味で、今回のsans-I/O層と純粋な `checkHandshake` はLeanの利点を活かす構成である。
+一方、`Option String → Bool` は欠落を区別できるが、構文解析と許可判断を利用者が
+混在させやすい。まず再利用可能な純粋な検証関数・allowlist helperで重複を減らし、
+必要性が確認できてからOrigin型を検討する順序がよい。
+「ブラウザが正しいOriginを送った」「プロキシ設定が信頼できる」といった環境上の仮定は、
+文字列やフレーム処理を証明するだけでは保証されない。
+
+### 他言語ではどこがOriginポリシーを持つか
+
+| 言語・ライブラリ | 位置づけとOriginの方針 | この実装との比較 |
+|---|---|---|
+| Go / Gorilla WebSocket | HTTPからupgradeするライブラリ。`Upgrader.CheckOrigin` 未設定時は、OriginがあればそのhostとHostを比較して拒否判定。欠落を許可する [4] | 汎用ライブラリにもブラウザ向けの保護を既定化する先例。ただしschemeを含む完全なsame-originとは異なる |
+| Python / `websockets` | プロトコルとサーバーAPIを提供。`origins=None` が既定で、許可集合を明示設定できる。集合内の `None` はOrigin欠落の許可を表す [5] | 全許可を既定にしつつポリシーを標準オプションとして提供する先例。現在のAPIに近い |
+| JavaScript / Node.js `ws` | 低レベルのHTTP upgrade統合。`verifyClient` 未設定なら、その検査による拒否をしない。公式資料は `verifyClient` よりHTTPサーバーの `upgrade` イベントで認証する方法を推奨する [E1] | RFCのハンドシェイク検証とアプリ側の受け入れ判断を分離する。Originもupgrade前のアプリ検査に置けるが、組み込み忘れは防げない |
+| Rust / tungstenite | 低レベルのハンドシェイク・フレーム処理。通常の経路の `NoCallback` は応答をそのまま許可し、`Callback.on_request` でヘッダ検査・拒否を追加できる [E2] | プロトコル適合性の検査とOrigin認可を分離する先例。安全性の契約を利用者に明示する必要がある |
+| Rust / axum | HTTP extractorの `WebSocketUpgrade` でupgradeを構成。確認した `FromRequestParts` はメソッド・upgradeヘッダ等を検査するが、Originの許可判定はしない [E3] | フレームワークでもOriginを自動制限するとは限らない。ハンドラー等でupgrade前に検査する構成が必要 |
+| Java / Spring Framework | WebSocketの登録・設定APIではsame-originのみ許可が既定。明示的なOrigin集合や全許可にも切替可能 [E4] | アプリ向け統合層で安全寄りの既定値を提供する先例。既存のHTTP・配備設定と合わせて扱える |
+| Python / Django Channels | `OriginValidator` / `AllowedHostsOriginValidator` を明示的に組み込む。後者はアプリの `ALLOWED_HOSTS` を再利用する [6] | 安全なポリシーの部品をフレームワーク側で提供し、アプリが組み合わせる先例。「フレームワークなら自動で安全」とも言えない |
+
+**結論: 「他言語の標準は全許可」「フレームワークはすべてsame-origin」のどちらでもない。**
+責務の切り方は一つではなく、同じ汎用upgradeライブラリでもGorillaと `ws` は異なる。
+これらの比較で重要なのは、多数決ではなく、利用者がどの設定を既に持ち、
+どこでポリシーを確実に適用できるかである。
+
+### Origin以外にも適用できる設計上の評価
+
+- **純粋なプロトコル核とHTTP統合を分ける**: 現在のフレーム層・`Upgraded`・
+  `WebSocket.upgrade` の分離は、tungsteniteのプロトコル核とaxumのHTTP統合の
+  関係と比較できる。TLS終端やCookie認証までフレーム層に抱え込む必要はない。
+- **安全な型と安全な配備を混同しない**: Rustの型安全なAPIもOrigin検証を自動では
+  保証しない。Leanの証明付きヘッダ型も同じで、アプリの信頼境界は別途指定する。
+- **機構と便利な入口は両立できる**: Stdの `Handler` / `StatelessHandler` と同様、
+  小さな基盤APIを保ちながら、アプリ向けhelperで設定の省略を防ぐ構成は可能。
+  ただし二つの入口でRFC検証を複製せず、共通の検証処理を呼ぶべきである。
+- **保守性は型の選択だけでは解決しない**: サーバーループの600行超の複製は、
+  ポリシー型を改善しても残る。upstream化での優先課題はupgrade境界を既存ループへ
+  統合し、標準HTTP処理への追従を一本化することである。
+
+### 外部比較を踏まえた推奨の補正
+
+先のB推奨を、**「すべての層でコールバックを必須にすべき」から
+「基盤の責務を保ち、アプリ向け入口で明示的な選択を促す」へ限定する**。
+
+| 対象の層 | 推奨する責務 | 今回の判断 |
+|---|---|---|
+| フレーム・メッセージ層 | RFC検証、サイズ上限、制御フレーム処理 | Origin・Host・認証を持ち込まない |
+| 汎用upgrade / ハンドシェイク層 | バイトの移譲、RFCハンドシェイク検証、呼び出し側が与えたポリシーの適用 | 現行の互換性を直ちに壊す根拠は不足。全許可を明記し、明示設定を容易にする |
+| ブラウザアプリ向けの入口・利用例 | 外部Originのallowlistと欠落時の方針を決め、認証と組み合わせる | Bによる設定必須化、または明示的なallowlist helperが有力。same-origin自動推定は信頼できる外部URL情報がある場合のみ |
+| upstreamへの提案 | APIの配置、機構とポリシーの境界、互換性、利用者の設定負担を合意する | 全許可を変える前にRFCで相談。ここでの推奨をLeanの公式方針として扱わない |
+
+型付きの `OriginPolicy`（全許可・許可集合・独自関数等）は選択を可視化できるが、
+それ自体が安全性の証明ではなく、新しい公開型の保守コストもある。
+まず現行コールバックと共通helperで十分かを確認し、ブラウザ向けの安全な入口が
+実際に必要になった時点で最小限のAPI変更を選ぶ。今回はいずれの実装変更も行わない。
+
+### この節の追加資料
+
+Leanの実装はバージョンを固定し、公式貢献ガイドと他言語の `main` / `latest` 資料は
+2026-11-02参照時点のものとして区別する。
+
+- [L1] [Lean 4.35.0: Std.Http.Header.Name](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Data/Headers/Name.lean)
+- [L2] [Lean 4.35.0: Std.Http.Header.Value](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Data/Headers/Value.lean)
+- [L3] [Lean 4.35.0: Std.Http.Config](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Config.lean)
+- [L4] [Lean 4.35.0: Std.Http.Server.Handler](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Handler.lean)
+- [L5] [Lean 4: External Contribution Guidelines](https://github.com/leanprover/lean4/blob/master/CONTRIBUTING.md)
+- [E1] [Node.js ws: WebSocketServer options / verifyClient](https://github.com/websockets/ws/blob/master/doc/ws.md#new-websocketserveroptions-callback)
+- [E2] [tungstenite: server handshake / NoCallback](https://github.com/snapview/tungstenite-rs/blob/master/src/handshake/server.rs) /
+  [Callback API](https://docs.rs/tungstenite/latest/tungstenite/handshake/server/trait.Callback.html)
+- [E3] [axum: WebSocketUpgrade / FromRequestParts](https://github.com/tokio-rs/axum/blob/main/axum/src/extract/ws.rs) /
+  [WebSocket API](https://docs.rs/axum/latest/axum/extract/ws/index.html)
+- [E4] [Spring Framework: Allowed Origins](https://docs.spring.io/spring-framework/reference/web/websocket/server.html#websocket-server-allowed-origins) /
+  [該当ドキュメントのソース](https://github.com/spring-projects/spring-framework/blob/main/framework-docs/modules/ROOT/pages/web/websocket/server.adoc)
 
 ## 総評
 
