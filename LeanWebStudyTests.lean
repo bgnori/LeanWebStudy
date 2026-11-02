@@ -295,12 +295,12 @@ private def testCloseReasons : IO Unit := do
     checkCloseReason exact exact
     checkCloseReason (exact ++ "x") exact
     for prefixLength in [119:124] do
-      let prefix := ascii prefixLength
+      let leading := ascii prefixLength
       let expected :=
         if prefixLength + width ≤ 123 then
-          prefix ++ symbol ++ ascii (123 - prefixLength - width)
-        else prefix
-      checkCloseReason (prefix ++ symbol ++ ascii 200) expected
+          leading ++ symbol ++ ascii (123 - prefixLength - width)
+        else leading
+      checkCloseReason (leading ++ symbol ++ ascii 200) expected
   IO.println "PASS: WebSocket close reasons preserve UTF-8 boundaries and the 125-byte limit"
 
 end WebSocketTests
