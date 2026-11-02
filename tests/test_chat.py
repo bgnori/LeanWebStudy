@@ -26,7 +26,8 @@ spec.loader.exec_module(dev)
 
 
 class WebSocket:
-    def __init__(self, port, origin, path="/chat/socket", protocol="leanwebstudy-chat"):
+    def __init__(self, port, origin, path="/chat/socket", protocol="leanwebstudy-chat",
+                 initial_bytes=b""):
         self.socket = socket.create_connection(("127.0.0.1", port), timeout=3)
         self.socket.settimeout(3)
         key = base64.b64encode(os.urandom(16)).decode()
@@ -39,7 +40,7 @@ class WebSocket:
             headers.append(f"Sec-WebSocket-Protocol: {protocol}")
         if origin is not None:
             headers.append(f"Origin: {origin}")
-        self.socket.sendall(("\r\n".join(headers) + "\r\n\r\n").encode())
+        self.socket.sendall(("\r\n".join(headers) + "\r\n\r\n").encode() + initial_bytes)
         head = bytearray()
         try:
             while not head.endswith(b"\r\n\r\n"):
@@ -64,7 +65,8 @@ class WebSocket:
             data.extend(chunk)
         return bytes(data)
 
-    def send_frame(self, data, opcode=1, final=True):
+    @staticmethod
+    def frame_bytes(data, opcode=1, final=True):
         mask = os.urandom(4)
         size = len(data)
         header = bytes([(0x80 if final else 0) | opcode])
@@ -74,9 +76,12 @@ class WebSocket:
             header += bytes([0x80 | 126]) + struct.pack("!H", size)
         else:
             header += bytes([0x80 | 127]) + struct.pack("!Q", size)
-        self.socket.sendall(header + mask + bytes(
+        return header + mask + bytes(
             value ^ mask[index % 4] for index, value in enumerate(data)
-        ))
+        )
+
+    def send_frame(self, data, opcode=1, final=True):
+        self.socket.sendall(self.frame_bytes(data, opcode, final))
 
     def send(self, author="Ada", message="こんにちは", **fields):
         request = {"type": "message", "author": author, "message": message,
@@ -138,6 +143,9 @@ class SSEClient:
 
 
 class ChatTests(unittest.TestCase):
+    page_path = "/chat/"
+    socket_path = "/chat/socket"
+
     @classmethod
     def setUpClass(cls):
         cls.log = tempfile.TemporaryFile(mode="w+")
@@ -155,7 +163,7 @@ class ChatTests(unittest.TestCase):
                 if cls.process.poll() is not None:
                     raise RuntimeError("Chat server exited during startup")
                 try:
-                    status, data = cls.request("/chat/endpoint")
+                    status, data = cls.request(cls.page_path + "endpoint")
                     if status == 200:
                         cls.port = json.loads(data)["port"]
                         break
@@ -184,7 +192,7 @@ class ChatTests(unittest.TestCase):
 
     @classmethod
     def request(cls, path, method="GET"):
-        connection = http.client.HTTPConnection("127.0.0.1", cls.http_port, timeout=15)
+        connection = http.client.HTTPConnection("127.0.0.1", cls.http_port, timeout=30)
         try:
             connection.request(method, path)
             response = connection.getresponse()
@@ -193,7 +201,7 @@ class ChatTests(unittest.TestCase):
             connection.close()
 
     def connect(self, port=None, origin=None):
-        client = WebSocket(port or self.port, origin or self.origin)
+        client = WebSocket(port or self.port, origin or self.origin, self.socket_path)
         self.addCleanup(client.close)
         history = client.event()
         self.assertEqual(history["type"], "history")
@@ -387,22 +395,29 @@ class ChatTests(unittest.TestCase):
     def test_origin_path_and_http_methods(self):
         for origin in ("http://evil.invalid", None, self.origin + ".evil.invalid"):
             with self.assertRaises((ConnectionError, OSError)):
-                WebSocket(self.port, origin)
+                WebSocket(self.port, origin, self.socket_path)
         with self.assertRaises((ConnectionError, OSError)):
             WebSocket(self.port, self.origin, path="/other")
         with self.assertRaises((ConnectionError, OSError)):
             WebSocket(self.port, self.origin, path="/pong/socket")
         for protocol in (None, "other-protocol"):
             with self.assertRaises((ConnectionError, OSError)):
-                WebSocket(self.port, self.origin, protocol=protocol)
-        self.assertEqual(self.request("/chat/endpoint", "POST")[0], 405)
-        self.assertEqual(self.request("/chat/", "POST")[0], 405)
-        status, page = self.request("/chat/")
+                WebSocket(self.port, self.origin, self.socket_path, protocol=protocol)
+        self.assertEqual(self.request(self.page_path + "endpoint", "POST")[0], 405)
+        self.assertEqual(self.request(self.page_path, "POST")[0], 405)
+        status, page = self.request(self.page_path)
         self.assertEqual(status, 200)
         self.assertIn(f'content="{self.port}"'.encode(), page)
         self.assertIn(b"new WebSocket", page)
         self.assertIn(b"text.textContent", page)
+        self.assertIn(self.socket_path.encode(), page)
+        self.assertIn(b'href="/chat/"', page)
+        self.assertIn(b'href="/chat-ws/"', page)
         self.assertNotIn(b"fetch(", page)
+        status, alias = self.request(self.page_path.rstrip("/"))
+        self.assertEqual(status, 200)
+        self.assertIn(self.socket_path.encode(), alias)
+        self.assertIn(f'content="{self.port}"'.encode(), alias)
         status, page = self.request("/pong/")
         self.assertEqual(status, 200)
         self.assertIn("通信対戦 Pong".encode(), page)
@@ -415,10 +430,24 @@ class ChatTests(unittest.TestCase):
             client, _ = self.connect()
             clients.append(client)
         with self.assertRaises((ConnectionError, OSError)):
-            WebSocket(self.port, self.origin)
+            WebSocket(self.port, self.origin, self.socket_path)
         clients[0].send(message="at-connection-limit")
         for client in clients:
             self.assertEqual(client.event()["message"], "at-connection-limit")
+        for client in clients:
+            client.close()
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                replacement, _ = self.connect()
+                replacement.send(message="connection-slot-reused")
+                self.assertEqual(replacement.event()["message"], "connection-slot-reused")
+                replacement.close()
+                break
+            except (ConnectionError, OSError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
 
     def test_preview_tunnel_same_origin_broadcast_and_shutdown(self):
         development = dev.Development(ROOT, ROOT / "Pages")
@@ -473,17 +502,113 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(pong.event(), {"type": "players", "count": 1})
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
         try:
-            connection.request("GET", "/chat/")
+            connection.request("GET", self.page_path)
             response = connection.getresponse()
             self.assertEqual(response.status, 200)
             self.assertIn(b'<meta name="leanwebstudy-chat-port" content="">', response.read())
         finally:
             connection.close()
         with self.assertRaises((ConnectionError, OSError)):
-            WebSocket(port, "http://evil.invalid")
+            WebSocket(port, "http://evil.invalid", self.socket_path)
         development.shutdown.set()
         with self.assertRaises(ConnectionError):
             client.read(1)
+
+
+class WsLeanChatTests(ChatTests):
+    page_path = "/chat-ws/"
+    socket_path = "/chat-ws/socket"
+    test_pong_roles_validation_broadcast_and_disconnect_presence = None
+    test_sse_chat_history_post_broadcast_and_validation = None
+
+    def test_idle_ping_pong_timeout_and_incomplete_upgrade_deadline(self):
+        responsive, _ = self.connect()
+        silent, _ = self.connect()
+        incomplete = socket.create_connection(("127.0.0.1", self.port), timeout=3)
+        self.addCleanup(incomplete.close)
+        incomplete.sendall(b"GET /chat-ws/socket HTTP/1.1\r\n")
+        responsive.socket.settimeout(35)
+        silent.socket.settimeout(35)
+        incomplete.settimeout(12)
+        self.assertEqual(incomplete.recv(1), b"")
+        opcode, payload = responsive.frame()
+        self.assertEqual(opcode, 9)
+        responsive.send_frame(payload, opcode=10)
+        responsive.send(message="alive-after-ping")
+        self.assertEqual(responsive.event()["message"], "alive-after-ping")
+        self.assertEqual(silent.frame()[0], 9)
+        self.assertEqual(silent.event()["message"], "alive-after-ping")
+        opcode, payload = silent.frame()
+        self.assertEqual(opcode, 8)
+        self.assertEqual(struct.unpack("!H", payload[:2])[0], 1001)
+        responsive.send(message="still-responsive")
+        self.assertEqual(responsive.event()["message"], "still-responsive")
+
+    def test_large_history_and_concurrent_publisher_order(self):
+        first, _ = self.connect()
+        for index in range(50):
+            first.send(message="界" * 499 + str(index % 10))
+            self.assertEqual(first.event()["type"], "message")
+        second, history = self.connect()
+        self.assertEqual(len(history), 50)
+        self.assertGreater(len(json.dumps(history, ensure_ascii=False).encode()), 8192)
+        failures = []
+
+        def publish(client, name):
+            try:
+                for index in range(15):
+                    client.send(author=name, message=f"concurrent-{index}")
+            except BaseException as error:
+                failures.append(error)
+
+        threads = [threading.Thread(target=publish, args=(first, "first")),
+                   threading.Thread(target=publish, args=(second, "second"))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, [])
+        received = [first.event() for _ in range(30)]
+        self.assertEqual([second.event() for _ in range(30)], received)
+        ids = [entry["id"] for entry in received]
+        self.assertEqual(ids, list(range(ids[0], ids[0] + 30)))
+
+    def test_upgrade_preserves_initial_frame_and_close_ignores_trailing_data(self):
+        observer, _ = self.connect()
+        request = json.dumps({"type": "message", "author": "Ada",
+                              "message": "coalesced", "requestId": "initial"}).encode()
+        client = WebSocket(self.port, self.origin, self.socket_path,
+                           initial_bytes=WebSocket.frame_bytes(request))
+        self.addCleanup(client.close)
+        self.assertEqual(client.event()["type"], "history")
+        self.assertEqual(client.event(), observer.event())
+        before_close = json.loads(request)
+        before_close["message"] = "before-close"
+        after_close = {**before_close, "message": "must-not-be-published"}
+        client.socket.sendall(
+            WebSocket.frame_bytes(json.dumps(before_close).encode()) +
+            WebSocket.frame_bytes(struct.pack("!H", 1000), opcode=8) +
+            WebSocket.frame_bytes(json.dumps(after_close).encode()))
+        self.assertEqual(client.frame()[0], 8)
+        self.assertEqual(observer.event()["message"], "before-close")
+        observer.send(message="after-peer-close")
+        self.assertEqual(observer.event()["message"], "after-peer-close")
+
+    def test_independent_history_and_broadcast(self):
+        client, _ = self.connect()
+        status, data = self.request("/chat/endpoint")
+        self.assertEqual(status, 200)
+        other = WebSocket(json.loads(data)["port"], self.origin)
+        self.addCleanup(other.close)
+        other.event()
+        client.send(message="ws-lean-only")
+        other.send(message="libwebsockets-only")
+        self.assertEqual(client.event()["message"], "ws-lean-only")
+        self.assertEqual(other.event()["message"], "libwebsockets-only")
+        _, history = self.connect()
+        self.assertEqual(history[-1]["message"], "ws-lean-only")
+        self.assertNotIn("libwebsockets-only", [entry["message"] for entry in history])
 
 
 if __name__ == "__main__":

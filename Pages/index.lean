@@ -15,6 +15,7 @@ def main : IO Unit :=
         "<li><a href=\"/cat/\">IRT / Computerized Adaptive Testing デモ</a></li>" ++
         "<li><a href=\"/shop/\">niwa store - ECサイトのページ遷移デモ</a></li>" ++
         "<li><a href=\"/chat/\">WebSocket リアルタイムチャット</a></li>" ++
+        "<li><a href=\"/chat-ws/\">WebSocket チャット (ws-lean)</a></li>" ++
         "<li><a href=\"/chat-sse/\">SSE リアルタイムチャット</a></li>" ++
         "<li><a href=\"/pong/\">WebSocket 通信対戦 Pong</a></li>" ++
         "</ul></body></html>")

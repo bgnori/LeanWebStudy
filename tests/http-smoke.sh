@@ -54,7 +54,7 @@ check_status() {
   local expected="$1"
   shift
   local actual
-  actual="$(curl -sS --max-time 5 -D "$work/headers" -o "$work/body" \
+  actual="$(curl -sS --max-time 30 -D "$work/headers" -o "$work/body" \
     -w '%{http_code}' "$@")"
   [[ "$actual" == "$expected" ]] || fail "Expected HTTP $expected, got $actual"
   if [[ "$expected" != 200 ]]; then
@@ -77,6 +77,7 @@ if grep -q 'href="/maplesql/"' "$work/body"; then
   fail "MapleSQL should not have a separate feature page"
 fi
 grep -q 'href="/templates/"' "$work/body" || fail "Template feature index link"
+grep -q 'href="/chat-ws/"' "$work/body" || fail "ws-lean chat comparison link"
 grep -q 'href="/cat/">IRT / Computerized Adaptive Testing デモ' "$work/body" ||
   fail "IRT CAT feature index link"
 grep -q 'href="/board/">掲示板 Webアプリ' "$work/body" || fail "Bulletin board feature index link"

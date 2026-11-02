@@ -61,6 +61,7 @@ Stop it with Ctrl+C.
 | `GET /wiki/new`, `/wiki/edit/{slug}` | Wiki article editor |
 | `POST /wiki/create`, `/wiki/save`, `/wiki/delete` | Create, update, and delete wiki articles |
 | `GET /chat/` | Real-time WebSocket chat page |
+| `GET /chat-ws/` | Equivalent ws-lean WebSocket chat for comparison |
 | `GET /chat-sse/` | SSE chat page (server events + HTTP POST messages) |
 | `GET /chat-sse/events` | Server-Sent Events chat stream |
 | `POST /chat-sse/send` | Validate and broadcast a chat message |
@@ -87,6 +88,7 @@ Stop it with Ctrl+C.
 | `POST /api/orderbook/reset` | Reset the demo order book to its initial synthetic orders |
 | `POST /api/orderbook/orders` | Submit a limit order; match by price-time priority |
 | `GET /chat/endpoint` | WebSocket port metadata for the development preview |
+| `GET /chat-ws/endpoint` | ws-lean listener port metadata for the development preview |
 | `GET /health` | JSON health check |
 | `GET /api/query` | MapleSQL-generated SQL, separate parameters, and executed result rows |
 
@@ -101,14 +103,19 @@ Dynamic responses disable caching.
 The chat uses libwebsockets through a native C bridge, with Lean JSON validation.
 Messages and recent history travel over WebSocket, not HTTP polling or POST.
 Open `/chat/` in two tabs to try it. A loopback-only ephemeral WebSocket port is
-started in the same process; the development preview tunnels `/chat/socket`
+started in the same process. `/chat-ws/` provides the equivalent chat using
+ws-lean's HTTP/1.1 handshake, framing, and message decoders on Std.Async TCP.
+It shares the validation and browser client with `/chat/`, but has independent
+history and broadcasts. The pinned ws-lean HTTP/1.1 modules build unchanged with
+Lean 4.35.0; its aggregate `Ws` target does not (see the compatibility details below).
+The development preview tunnels `/chat/socket`, `/chat-ws/socket`,
 and `/pong/socket` through its stable port. Pong exchanges paddle positions and
 the player-1-authoritative ball state over WebSocket; open `/pong/` in two tabs
 or devices to play. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
 for setup, limits, reconnection behavior, and local-only restrictions.
 The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
 updates and POST for sending; its latest 50 messages are in-memory and EventSource
-handles reconnection. Both chat implementations are independent and local-only.
+handles reconnection. All three chat implementations are independent and local-only.
 The order book starts with synthetic bids and asks, matches crossing limit
 orders by price then order ID (FIFO), and keeps the latest 20 trades in memory.
 Prices are accepted to two decimal places and quantities are whole numbers.
@@ -189,7 +196,7 @@ separate. See the [design rationale (Japanese)](docs/module-reload.md)
 for trade-offs and the measurement-driven optimization policy.
 
 The watcher is a loopback-only, GET/HEAD development preview proxy with
-`/chat/socket` and `/pong/socket` WebSocket tunnels, not a
+`/chat/socket`, `/chat-ws/socket`, and `/pong/socket` WebSocket tunnels, not a
 production server. It reserves `/__dev/status` and injects a small polling client
 only in preview HTML. Normal `lake exe leanwebstudy` behavior is unchanged.
 Do not run multiple watchers/builds against the same checkout concurrently.
@@ -213,6 +220,7 @@ Pages are loaded from the `Pages/` directory by default. Each feature has an
 - `/board/` (SQLite-backed bulletin board)
 - `/wiki/` and `/wiki/{slug}` (SQLite-backed wiki)
 - `/chat/` (WebSocket real-time chat)
+- `/chat-ws/` (equivalent ws-lean chat with separate history)
 - `/pong/` (WebSocket two-player Pong)
 
 For example, `/blog/` runs `Pages/blog/index.lean`, and `/blog/new` runs

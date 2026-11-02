@@ -308,7 +308,9 @@ def handler_for(development):
             )
             upgraded = False
             try:
-                connection.request("GET", "/chat/endpoint")
+                endpoint_path = ("/chat-ws/endpoint" if path == "/chat-ws/socket"
+                                 else "/chat/endpoint")
+                connection.request("GET", endpoint_path)
                 response = connection.getresponse()
                 if response.status != 200:
                     raise RuntimeError("WebSocket endpoint discovery failed")
@@ -416,7 +418,7 @@ def handler_for(development):
                     b"<p>Waiting for a successful update.</p></body></html>", state,
                 )
                 return
-            if path in {"/chat/socket", "/pong/socket"}:
+            if path in {"/chat/socket", "/chat-ws/socket", "/pong/socket"}:
                 self.websocket(path)
                 return
             if path == "/chat-sse/events":

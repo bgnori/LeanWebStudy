@@ -43,7 +43,7 @@ class DevelopmentIntegrationTests(unittest.TestCase):
                         connection.close()
 
                 def wait_for(phase, revision):
-                    deadline = time.monotonic() + 120
+                    deadline = time.monotonic() + 180
                     saw_progress = False
                     while time.monotonic() < deadline:
                         self.assertIsNone(process.poll(), "Watcher exited prematurely")

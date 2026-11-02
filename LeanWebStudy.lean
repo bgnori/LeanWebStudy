@@ -3,6 +3,8 @@ import Html
 import LeanWebStudy.Database
 import LeanWebStudy.DevPages
 import LeanWebStudy.Chat
+import LeanWebStudy.WsChat
+import LeanWebStudy.ChatPage
 import LeanWebStudy.Pong
 import LeanWebStudy.SSEChat
 import LeanWebStudy.OrderBook
@@ -47,6 +49,7 @@ structure WebHandler where
   router : Lithe.Router
   httpPort : UInt16
   chatPort : UInt16 := 0
+  wsChatPort : UInt16 := 0
   sseChat : SSEChat.Server
 
 def rowsJson (rows : Array (Array MapleSQL.Value)) : Lean.Json :=
@@ -138,7 +141,8 @@ def WebHandler.pageContext (self : WebHandler) (path : String) : IO Page.Context
     emailQuery (← self.execute emailQuery)
   return {
     requestId, path, usersHtml := users, sqliteDemoHtml := demo
-    chatPort := self.chatPort.toNat }
+    chatPort := (if path == "/chat-ws/" || path == "/chat-ws" then
+      self.wsChatPort else self.chatPort).toNat }
 
 def WebHandler.boardPosts (self : WebHandler) : IO (Array Page.BoardPost) := do
   let query <- renderQuery (.select #[.all] "posts" none)
@@ -829,6 +833,10 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
       if context.req.path != "/chat/endpoint" then self.fallback context
       else pure ((Lithe.Response.json (Lean.Json.mkObj [
         ("port", Lean.toJson self.chatPort.toNat)])).setHeader "Cache-Control" "no-store"))
+    |>.get "/chat-ws/endpoint" (fun context => do
+      if context.req.path != "/chat-ws/endpoint" then self.fallback context
+      else pure ((Lithe.Response.json (Lean.Json.mkObj [
+        ("port", Lean.toJson self.wsChatPort.toNat)])).setHeader "Cache-Control" "no-store"))
     |>.get "/board/" (self.boardGetRoute)
     |>.post "/board/" (self.boardPostRoute)
     |>.post "/wiki/create" (self.wikiPostRoute "create")
@@ -843,10 +851,10 @@ def WebHandler.registerRoutes (self : WebHandler) : Lithe.Router :=
 def WebHandler.create
     (counter : Std.Mutex Nat) (database : Std.Mutex Database)
     (orderBook : Std.Mutex OrderBook.Book) (pages : DevPages)
-    (sseChat : SSEChat.Server) (httpPort chatPort : UInt16) :
+    (sseChat : SSEChat.Server) (httpPort chatPort : UInt16) (wsChatPort : UInt16 := 0) :
     WebHandler :=
   let handler : WebHandler := {
-    counter, database, orderBook, pages, sseChat, httpPort, chatPort, router := .empty }
+    counter, database, orderBook, pages, sseChat, httpPort, chatPort, wsChatPort, router := .empty }
   { handler with router := handler.registerRoutes }
 
 def WebHandler.toLitheRequest (request : Request Body.Stream) : IO Lithe.Request := do

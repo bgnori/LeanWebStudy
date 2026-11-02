@@ -24,8 +24,9 @@ def main (args : List String) : IO Unit := do
   let chat ← LeanWebStudy.Chat.openServer port.toUInt16
     LeanWebStudy.Chat.response LeanWebStudy.Pong.response
   let chatPort ← LeanWebStudy.Chat.port chat
+  let wsChat ← LeanWebStudy.WsChat.openServer port.toUInt16
   let handler := LeanWebStudy.WebHandler.create counter database orderBook pages sseChat
-    port.toUInt16 chatPort
+    port.toUInt16 chatPort wsChat.port
   Std.Async.Async.block do
     let server <- Std.Http.Server.serve
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
@@ -33,8 +34,10 @@ def main (args : List String) : IO Unit := do
     IO.println s!"Listening on http://127.0.0.1:{port}"
     IO.println s!"Pages: {pages.directory} (reloaded per request)"
     IO.println s!"WebSocket chat: ws://127.0.0.1:{chatPort}/chat/socket"
+    IO.println s!"ws-lean chat: ws://127.0.0.1:{wsChat.port}/chat-ws/socket"
     IO.println s!"WebSocket Pong: ws://127.0.0.1:{chatPort}/pong/socket"
     IO.println s!"SSE chat: http://127.0.0.1:{port}/chat-sse/"
     discard <| Std.Async.Async.concurrently server.waitShutdown
-      (Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated)
-        (LeanWebStudy.Chat.run chat)))
+      (Std.Async.Async.concurrently (LeanWebStudy.WsChat.run wsChat)
+        (Std.Async.Async.ofAsyncTask (← IO.asTask (prio := .dedicated)
+          (LeanWebStudy.Chat.run chat))))

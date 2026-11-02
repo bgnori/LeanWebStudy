@@ -43,7 +43,7 @@ response を前提にした抽象と、長時間存続する双方向セッシ�
 接続状態と処理状態の整合性を保つ責任が呼び出し側に漏れやすい、と捉えるのが
 正確である。
 
-## 今日の判断
+## 初期実装の判断（2026-10-31）
 
 2026-10-31 時点では、現状の libwebsockets を使う方針は妥当と判断する。
 Std HTTP サーバーへの Upgrade 機能追加や独自接続ループの保守を避けつつ、
@@ -66,6 +66,76 @@ HTTP は既存の Std / Lithe 構成のまま、WebSocket のプロトコル処�
 | [Python websockets](https://websockets.readthedocs.io/en/stable/intro/index.html) | フレーム処理が成熟し、asyncio / Sans-I/O を提供 | Python サービスと追加パッケージの起動・終了・依存管理が必要。アプリ本体が複数ランタイムになる | 既存 Python は開発ツールのみなので不採用 |
 | [libwebsockets](https://libwebsockets.org/) | 継続的に開発される C ライブラリー。非同期イベントループ、断片化、制御フレームなどを担当。既存 SQLite C FFI と同じビルド方式に乗る | システム開発ライブラリーが増える。C のキュー・ライフサイクル管理、別リスナーが必要 | **採用** |
 
+## ws-lean 比較版（2026-11-02）
+
+`/chat/`（libwebsockets）を残し、`/chat-ws/`（ws-lean）を追加した。
+トップページと両チャットのリンクから切り替えられる。両方をそれぞれ二つのタブで
+開いて比較する。履歴・連番・接続は実装ごとに独立しており、相互には配信しない。
+画面の再接続、送信確認、重複防止、HTML 安全表示は
+`LeanWebStudy/ChatPage.lean` を共有し、サーバーの JSON 検証は
+`LeanWebStudy.Chat.response` を共有する。
+
+### Lake と Lean 4.35.0 での確認結果
+
+Codespaces の既存ツールチェーン `leanprover/lean4:v4.35.0` を変更せず、
+`lake update ws-lean` で取得し、実際にビルドした。upstream の toolchain は
+`nightly-2026-04-25` だが、それだけを理由に利用不可とはしていない。
+
+- `lakefile.lean` で ws-lean を
+  `2a6665a120993533122bcbfa076ef35c17025bea` に固定。
+  `lake-manifest.json` もコミットし、推移依存の http2-lean
+  `82fc066025f3e5fdec54c836f4e9659c2f8176ab`、tls13-lean
+  `4fa14fe068d9ea17c85294a6a27c224b2de5cddb` を再現する。
+- `lake build Ws` は `Tls.Handshake` と `Http2.Frame` の証明の型・rewrite エラーで失敗した。
+  upstream は Bazel を正式なビルド、Lake をエディター用モデルとしている。
+  **ws-lean 全体の Lean 4.35.0 互換性を確認できたという意味ではない。**
+- HTTP/1.1 に必要な `Ws.Message`、`Ws.Transport.Http1`、
+  `Ws.Transport.Plain` に import を限定すると、無改変の upstream で
+  `lake build LeanWebStudy.WsChat` と `lake build` が成功した。
+  `Http2.CancellationToken` の小さな互換ヘルパーは利用するが、HTTP/2/TLS は使わない。
+- `Ws.Connection` もコンパイルできたが、その高レベル送受信は通常ワーカーの
+  IO ポーリングを使い、この 2 CPU 環境では履歴送信が停止した。
+  そのため本サンプルは同 API や `Ws.Server` を使わず、sans-I/O 層を採用する。
+  過去の ws-lean 版は `../grpc-lean` という相対依存を持つため採用しなかった。
+- 依存キャッシュへのパッチ、`sorry`、ツールチェーン変更、コピーしたプロトコル実装はない。
+  圧縮・TLS を使わないため upstream の zlib/HACL ネイティブ FFI もリンクしない。
+  既存版と SQLite のシステム依存は引き続き必要。
+
+再確認は `lake update ws-lean`、`lake build LeanWebStudy.WsChat`、`lake build`。
+アップグレード時は SHA と manifest を一緒に更新し、以下の実通信テストを再実行する。
+`lake build Ws` の成功を本サンプルのビルド条件にはしない。
+
+### 実装と比較範囲
+
+`LeanWebStudy/WsChat.lean` は別の loopback TCP リスナーを同一プロセス内で起動する。
+ws-lean が HTTP/1.1 Upgrade、先読みバイト保持、フレームのマスク・サイズ・opcode
+検証、断片化、UTF-8、Close payload を処理する。アプリ側が履歴・配信・Origin と
+サブプロトコルの許可、Ping/Pong の送信、タスクの後始末を担当する。
+Std HTTP サーバーからの接続移譲は不要で、C ブリッジは追加していない。
+
+| 項目 | libwebsockets `/chat/` | ws-lean `/chat-ws/` |
+| --- | --- | --- |
+| WebSocket パス | `/chat/socket` | `/chat-ws/socket` |
+| ポート発見 | `/chat/endpoint` | `/chat-ws/endpoint` |
+| JSON / サブプロトコル | 下記の共通仕様 | 同じ `leanwebstudy-chat` |
+| 履歴 / 検証 / 再接続 UI | 最新50件、全接続配信 | 同じ、ただし履歴は別 |
+| プロトコル層 | システム C ライブラリー | Lean の ws-lean sans-I/O |
+| 実行・待ち行列 | C イベントループ | Std.Async と有界キュー |
+
+ws-lean 版は未完了 Upgrade を含む最大64接続、接続ごとの配信待ち最大64イベント、
+制御待ち最大64フレーム。履歴登録・購読開始・配信投入は同じ mutex 内で順序付けし、
+履歴を最初に送ってから受信を始める。ネットワーク書き込みは mutex の外で単一の
+送信処理が担当し、遅い接続は Close 1008 または書き込み失敗・期限で切断する。
+キュー確認には短い Async sleep を使うが、ネットワーク上のポーリングは行わない。
+
+受信フレーム・結合メッセージは8192バイト、断片数4096、HTTP head は16 KiB、
+ヘッダー最大32個。送信履歴は8192バイトを超えても全50件を返す。
+binary は1003、無効 UTF-8 は1007、サイズ超過は1009。
+20秒間隔で Ping、最後の有効フレームから30秒無応答で1001。
+Upgrade は10秒、書き込みは5秒、Close の応答待ちは最大1秒。
+受信タスクと期限付き処理は明示的に回収し、成功後に切断する残存タイマーを作らない。
+圧縮・TLS・HTTP/2 は交渉せず、この比較版も認証のないローカル学習用途に限定する。
+
 libwebsockets はプロトコル処理、Lean は JSON の検証・配信イベント生成を担当する。
 最新 upstream のライセンスは公式サイト上 MIT。配布版のライセンスはその版の
 同梱文書を確認する（Ubuntu のパッケージには別の履歴上の表記があり得る）。
@@ -87,7 +157,7 @@ SSE はサーバーからクライアントへの一方向配信なので、投�
 
 SSE版もメモリー内の履歴は最新50件、最大64接続で、各接続の待ち行列には上限を設ける。
 履歴は再起動で消える。チャットの比較・学習用であり、認証や永続化を備えた本番用途ではない。
-WebSocket版は従来どおり `/chat/` から利用できる。
+WebSocket版は `/chat/` と `/chat-ws/` から利用できる。
 
 ## 起動
 
@@ -102,6 +172,8 @@ python3 tools/dev.py
 <http://127.0.0.1:8080/chat/> を二つのタブで開く。名前と本文を送信すると、
 送信元を含む全接続へ即座に配信される。チャットの履歴は SQLite に保存せず、
 プロセスのメモリーに最新 50 件だけ保持し、再起動で消える。
+ws-lean 版は <http://127.0.0.1:8080/chat-ws/> を二つのタブで開く。
+watcher 経由でも既定の <http://127.0.0.1:8080/> から両方を選べる。
 
 <http://127.0.0.1:8080/pong/> を二つのタブまたは端末で開くと、通信対戦 Pong を
 遊べる。左側のプレイヤー1がボール状態をシミュレーションし、両プレイヤーの
@@ -115,9 +187,10 @@ python3 tools/dev.py
   両方とも `127.0.0.1` のみ。WebSocket URL は起動ログに表示され、
   ページの meta にポートを渡す。別ターミナルでサービスを起動する必要はない。
 - watcher: ページのポート情報を空にし、ブラウザーは同じプレビュー URL の
-  `/chat/socket` または `/pong/socket` に接続する。Python のプレビューが handshake
+  `/chat/socket`、`/chat-ws/socket` または `/pong/socket` に接続する。Python のプレビューが handshake
   とバイト列を転送する。フレームの解析・再実装や HTTP ポーリングは行わない。
 - `GET /chat/endpoint` は watcher の接続時のポート発見用メタデータ。
+  ws-lean の場合は `GET /chat-ws/endpoint` で別リスナーを発見する。
   投稿や履歴は返さない。従来の `/health` JSON は変更しない。
 - Origin は `http://127.0.0.1:<HTTPポート>` と
   `http://localhost:<HTTPポート>` のみ許可。Origin のない接続や他サイトは拒否する。
@@ -189,11 +262,17 @@ Leanが座標とスコアの範囲を検証する。
 ```sh
 lake test
 python3 -m unittest discover -s tests -p 'test_chat.py'
-python3 -m unittest discover -s tests -p 'test_dev.py'
+python3 -m unittest discover -s tests -p 'test_dev*.py'
 ```
 
-チャットテストは自分で起動・停止する実サーバーに対して、複数接続への配信、
+チャットテストは自分で起動・停止する実サーバーに対して、両WebSocket実装で共通の複数接続への配信、
 履歴・再接続・最新50件、入力・接続数制限、断片化、Ping/Pong、Close、
 Origin・サブプロトコル拒否、Pongのプレイヤー割当・入力検証・中継・切断通知、
 プレビュートンネルを検証する。Python 標準ライブラリーのみを使い、
 テストのための WebSocket パッケージは追加しない。
+ws-lean 固有では履歴の分離、8192バイトを超える履歴、同時投稿の配信順、
+Upgrade と同時に届く最初のフレーム、Close 後のデータ無視、Ping/Pong の生存確認、
+無応答切断、未完了 Upgrade の期限も検証する。タイマー検証は実時間で約30秒かかる。
+動的ページは別プロセスで Lean を起動するため、HTTP テストは初回生成を最大30秒待つ。
+watcher 統合テストは更新ごとに全ページを検査し、各更新を最大180秒待つ。
+保存・エラー復旧・追加・削除を繰り返すため、全体で10分以上かかる場合がある。
