@@ -76,13 +76,22 @@ inductive UpgradableResponse (β : Type) where
 
 移譲は接続ループの **loop back しない終端状態** として実装した
 (`LoopAction.upgrade` → `performUpgrade`)。ソケットの所有権は終始サーバーに
-残る:
+残す設計である。ただし、現在の実装について次の保証上の制約がある:
 
 - 継続の完了・例外はサーバーの接続後始末に接続され、`Transport.close` は
-  常にサーバーが実行する(継続に `close` は公開しない)。
+  サーバーが呼び出す(継続に直接のTransport解放操作は公開しない)。
 - サーバーのシャットダウン時は、継続をキャンセルコンテキストと race し、
-  トランスポートを閉じて継続を解除してから完了を待つ。
+  `Transport.close` を呼び出してから継続の完了を待つ。
+  **標準TCPではこの操作はno-opのため、これによる即時切断・待機解除は保証されない。**
 - 継続の例外は `UpgradableHandler.onFailure` に通知される。
+- 継続から派生した独立タスクは追跡しない。WebSocketや `Upgraded` の参照が
+  残る場合の操作権失効と終了完了の契約は未整備であり、継続の完了だけで
+  すべての接続利用が終了したとは言えない。
+
+この制約とsend/close競合を、プロトコル順序だけでなく寿命管理の問題として扱う。
+[問題定義と証明に向けた設計方針](./websocket-lifetime-design.md)に、
+単一の接続所有タスク、状態遷移の証明、native境界の検証を含む案を記す。
+これは設計案であり、現行実装の保証ではない。
 
 keep-alive 接続の 2 本目以降のリクエストとして Upgrade が来ても機能する
 (`test_upgrade_after_keep_alive_request`)。これは別リスナー方式では原理的に
