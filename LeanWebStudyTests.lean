@@ -1,4 +1,5 @@
 import LeanWebStudy
+import LeanWebStudy.LifecycleTests
 
 open LeanWebStudy
 
@@ -318,6 +319,7 @@ def expectFailure (action : IO α) (message : String) : IO Unit := do
   | none => throw (IO.userError s!"Expected failure: {message}")
 
 def main : IO Unit := do
+  LifecycleTests.test
   testCloseReasons
   let testProduct : Page.ShopProduct := {
     slug := "test", name := "Test", category := "Demo", price := 100,
