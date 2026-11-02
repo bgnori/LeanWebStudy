@@ -59,6 +59,42 @@ Lean側の参照保持だけでnative境界まで安全と断定もしない。*
 「接続の終了が完了した」を区別する。送信成功も相手の受信・アプリ処理完了の証明ではない。
 shutdownで要求の受理を止めることと、物理的な資源解放も区別する。
 
+### HTTP/2とも自然な対応関係を保つ
+
+**HTTP/2が入っても矛盾せず、自然な対応関係が取れることを設計方針とする。**
+これは今回HTTP/2対応を実装するという意味ではない。証明対象や終了APIを、
+「一つのWebSocketが一つのTCP接続を排他的に所有する」という仮定に固定しない。
+
+| 層・操作 | HTTP/1.1 WebSocket | HTTP/2 WebSocket（RFC 8441） |
+|---|---|---|
+| 確立 | 101でHTTPから接続を移譲 | Extended CONNECTで一つのストリームを確立 |
+| WebSocketの終了手順 | Closeフレームの交換 | 同じくCloseフレームの交換 |
+| 下位の送信方向の終了 | TCPのwrite側shutdown等。実際に提供される能力を確認する | 当該ストリームのEND_STREAM |
+| 下位の異常中断 | 接続を中断する能力が必要。現行の標準TCP Transportには不足 | 当該ストリームのRST_STREAM |
+| 下位資源の共有 | upgrade後のTCP接続は通常そのWebSocket専用 | 同じHTTP/2接続を他ストリームと共有 |
+| 完了待機 | WebSocket終了、保留I/O静止、TCP解放完了を区別 | WebSocket終了、ストリーム終了、共有接続の終了を区別 |
+
+これらは役割の対応であり、CloseフレームとEND_STREAM、TCP shutdownとRST_STREAMを
+同じ操作と見なすものではない。下位のEOF・resetだけでWebSocketの正常なclosing
+handshakeが成立したとはしない。
+
+依存する `http2-lean` の `ExtendedConnect.Tunnel` は `send`、`recv?`、
+`closeSend`、`cancel`、`wait` を分けている。参考になるが、このAPI名だけから
+native資源の解放完了や有界時間内の終了まで保証されると解釈しない。
+
+接続所有タスク案の「接続」は、WebSocketの論理セッションを意味する。
+HTTP/2ではWebSocket側がストリーム上の要求を順序付け、HTTP/2接続側の所有タスクが
+多重化・フロー制御・物理socketを管理する。二層の所有関係は矛盾しない。
+一つのWebSocketの中断で、他ストリームを巻き込んで共有TCP接続を閉じない。
+逆に接続全体の障害は、影響するストリームへ終端イベントとして伝播させる。
+GOAWAYも、既存の全WebSocketが直ちに正常終了したという通知ではない。
+
+証明は、共通のWebSocket状態機械と、backendごとの契約への対応に分ける。
+HTTP/2ではさらに、接続・ストリームのフロー制御による送信待ち、中断・失効の伝播、
+他ストリームへの影響範囲を確認する。単一所有タスクでも送信完了を無期限に待てば
+中断処理を止め得るため、保留I/Oの追跡とイベント多重化の要件は維持する。
+HTTP/2ストリームの終了定理から、共有TCP資源の解放までを結論しない。
+
 ## 3. 設計の第一候補: 接続を単一の所有タスクが駆動する
 
 ```text
@@ -169,6 +205,8 @@ native呼び出しは明確な境界に閉じ込め、信頼する仕様を列�
 ## 参照
 
 - [RFC 6455 §5.5.1: Close](https://www.rfc-editor.org/rfc/rfc6455.html#section-5.5.1)
+- [RFC 8441: Bootstrapping WebSockets with HTTP/2](https://www.rfc-editor.org/rfc/rfc8441.html)
+- [http2-lean: ExtendedConnect.Tunnel（依存固定版）](https://github.com/pb64-lean/http2-lean/blob/82fc066025f3e5fdec54c836f4e9659c2f8176ab/lean/Http2/ExtendedConnect.lean)
 - [Lean 4.35.0: Transport](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Transport.lean)
 - [Lean 4.35.0: Async TCP](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Async/TCP.lean)
 - [Lean 4.35.0: native TCP interface](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Internal/UV/TCP.lean)
