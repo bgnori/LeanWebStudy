@@ -1,9 +1,13 @@
 # Lean 4 Web アプリケーションにおける WebSocket 利用のリスク・リターン / コスト・リターン分析
 
+所属: [Web ApplicationのStudy](./README.md)。アプリ実装から得た分析と、
+[Std拡張WebSocket開発](../std-websocket/README.md)へ派生した理由を残す経緯資料。
+付録の候補比較は、派生側の現在の採用方針・保証を示すものではない。
+
 2026-11-02 作成。本リポジトリで実装した三つのチャット
 （`/chat/` libwebsockets、`/chat-ws/` ws-lean、`/chat-sse/` SSE）と
 リアルタイム Pong（`/pong/`）の実装経験に基づく。個別の技術選定の経緯と
-プロトコル仕様は [websocket-chat.md](./websocket-chat.md) を参照。
+プロトコル仕様は [websocket-chat.md](websocket-chat.md) を参照。
 
 ## 1. 前提となる構造的制約
 

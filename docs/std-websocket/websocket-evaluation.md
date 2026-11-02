@@ -1,5 +1,8 @@
 # WebSocket実装(1857fa3)の評価レポート
 
+所属: [Std拡張WebSocket開発](./README.md)。初期実装の評価とその後の追補。
+現在の合意・進捗は開発トラックの入口を参照。
+
 対象コミット: `1857fa30de8320914238cdf1e9667afcf0afeaa9`
 「feat(websocket): implement WebSocket support with RFC 6455 compliance」
 
@@ -97,8 +100,8 @@ HTTP接続継続性、突然切断まで24ケースをPython標準ライブラ�
    未確認であり、発生すると断定もしない。送信順序、タスク・接続の終了、
    native資源の生存を別々に検証する必要がある。
    問題定義、証明対象、対応方針を
-   [WebSocketの終了・寿命管理設計](./websocket-lifetime-design.md)にまとめた。
-   [依存先契約と証明の前提調査](./websocket-dependency-contracts.md)では対応版のnativeソースと
+   [WebSocketの終了・寿命管理設計](websocket-lifetime-design.md)にまとめた。
+   [依存先契約と証明の前提調査](websocket-dependency-contracts.md)では対応版のnativeソースと
    libuv契約を確認し、寿命保持の実装根拠と、強制終了・進行性の不足を分けて記録した。
 3. ⚪ UTF-8検証がメッセージ完成時のみ(インクリメンタルでない)。RFC準拠だが、
    Autobahnの厳格なfail-fastケース(6.x系)では「可能な限り早く失敗」が期待される。
@@ -143,11 +146,11 @@ HTTP接続継続性、突然切断まで24ケースをPython標準ライブラ�
 
 ### 現状と防御の範囲
 
-- [WebSocket.lean](../StdExt/Http/WebSocket.lean) の `UpgradeOptions.checkOrigin` と、
+- [WebSocket.lean](../../StdExt/Http/WebSocket.lean) の `UpgradeOptions.checkOrigin` と、
   直接呼び出せる `checkHandshake` の省略時引数は、どちらも `fun _ => true`。
   コールバックが受け取るのは `Option String` だけで、HostやTLS情報ではない。
   拒否すると101に切り替える前に403を返す。
-- 一方、[デモの `WebHandler.wsEchoOrigin`](../LeanWebStudy.lean) は明示設定済みで、
+- 一方、[デモの `WebHandler.wsEchoOrigin`](../../LeanWebStudy.lean) は明示設定済みで、
   `http://127.0.0.1:<httpPort>` と `http://localhost:<httpPort>` のみを許可する。
   Origin欠落は許可し、文字列 `"null"` や外部Originは拒否する。
   **ライブラリ既定値の問題と、デモの現在の挙動は区別する必要がある。**

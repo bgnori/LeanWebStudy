@@ -1,6 +1,8 @@
 # WebSocketの依存先契約と証明の前提
 
-2026-11-02調査。[終了・寿命管理の設計案](./websocket-lifetime-design.md)の前提調査。
+所属: [Std拡張WebSocket開発](./README.md)。依存先の調査根拠・外部仮定の台帳。
+
+2026-11-02調査。[終了・寿命管理の設計案](websocket-lifetime-design.md)の前提調査。
 対象は `StdExt → Std.Http.Transport → Std.Async.TCP → Lean native runtime → libuv`
 のTCP経路。プロジェクトの全依存ライブラリを網羅した監査ではない。
 実装変更・形式証明・sanitizerによる検証は行っていない。

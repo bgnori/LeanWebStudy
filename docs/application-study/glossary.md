@@ -1,5 +1,7 @@
 # プロジェクト用語集
 
+所属: [Web ApplicationのStudy](./README.md)。
+
 この文書は、README やサンプルページ、実装を読むときに出てくる語彙を整理したものです。
 各語の分類は、次の意味で使っています。
 
@@ -68,6 +70,6 @@
 
 ## 関連ドキュメント
 
-- [README](../README.md)：起動方法、ルート一覧、開発 watcher の利用方法。
+- [README](../../README.md)：起動方法、ルート一覧、開発 watcher の利用方法。
 - [モジュール変更の反映](module-reload.md)：ページ再読み込み・ビルド・再起動の境界と診断方法。
 - [WebSocket チャットの技術選定](websocket-chat.md)：WebSocket と SSE の構成、制約、技術選定。

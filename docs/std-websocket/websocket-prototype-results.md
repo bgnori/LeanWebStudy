@@ -1,22 +1,24 @@
 # WebSocket純粋モデル試作結果とTransport接続試作の条件
 
+所属: [Std拡張WebSocket開発](./README.md)。純粋モデル試作の検証結果。
+
 2026-11-02。**純粋モデルとテストを実装・検証した。実Transportへの接続は未実施**。
 本番WebSocket・HTTP・Transportの動作および公開APIは変更していない。
 
-前提: [設計方針](./websocket-lifetime-design.md)、
-[モデル比較](./websocket-model-proposals.md)、
-[動作契約とHTTPとの整合](./websocket-behavior-policy.md)、
-[依存先契約](./websocket-dependency-contracts.md)。
+前提: [設計方針](websocket-lifetime-design.md)、
+[モデル比較](websocket-model-proposals.md)、
+[動作契約とHTTPとの整合](websocket-behavior-policy.md)、
+[依存先契約](websocket-dependency-contracts.md)。
 
 ## 1. 実装した範囲
 
-- [Lifecycle](../StdExt/Http/WebSocket/Lifecycle.lean):
+- [Lifecycle](../../StdExt/Http/WebSocket/Lifecycle.lean):
   Bの直積状態・操作記録を小さく実装し、Cの保持義務を保留read/writeの記録として表した。
   汎用のPermit/Leaseフレームワークは作っていない。
-- [LifecycleTests](../LeanWebStudy/LifecycleTests.lean):
+- [LifecycleTests](../../LeanWebStudy/LifecycleTests.lean):
   純粋なstepへEvent列を与える決定的テストドライバーと、有界な履歴探索。
   OSのsocket・タスク・タイマーを使わない。並行実行器のモックそのものではない。
-- [既存テスト入口](../LeanWebStudyTests.lean):
+- [既存テスト入口](../../LeanWebStudyTests.lean):
   新テストを組み込み、既存テストと同じ `lake test` で実行する。
 
 stepは `Except Error (State × List Effect)` を返す。

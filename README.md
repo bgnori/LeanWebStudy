@@ -3,8 +3,26 @@
 A separate Lean 4 application that consumes [MapleSQL](https://github.com/bgnori/MapleSQL)
 and serves dynamically generated web content backed by SQLite.
 
+## Two tracks in this repository
+
+The application study and its derived WebSocket library research have separate
+documentation entry points:
+
+- **[Web application study (Japanese)](docs/application-study/README.md)**:
+  building Lean applications with HTTP, HTML, SQLite, and real-time examples.
+- **[Std-extension WebSocket development (Japanese)](docs/std-websocket/README.md)**:
+  upgrade integration, lifecycle contracts, proofs, and prototypes. This grew
+  out of the application's integration difficulties; it is not a completed
+  replacement for the existing application transports.
+
+Start with the **[documentation map (Japanese)](docs/README.md)** to choose a
+track. If successful, the WebSocket work is intended to become an independent
+project and a candidate for an upstream Lean PR; neither has happened yet.
+The source packages and test runner are still shared. The instructions below
+remain the application setup and usage guide.
+
 For definitions and classifications of project, web, and Lean terminology, see the
-[project glossary (Japanese)](docs/glossary.md).
+[project glossary (Japanese)](docs/application-study/glossary.md).
 
 ## Requirements
 
@@ -112,19 +130,18 @@ Lean 4.35.0; its aggregate `Ws` target does not (see the compatibility details b
 The development preview tunnels `/chat/socket`, `/chat-ws/socket`,
 and `/pong/socket` through its stable port. Pong exchanges paddle positions and
 the player-1-authoritative ball state over WebSocket; open `/pong/` in two tabs
-or devices to play. See [technology trade-offs and protocol (Japanese)](docs/websocket-chat.md)
+or devices to play. See [technology trade-offs and protocol (Japanese)](docs/application-study/websocket-chat.md)
 for setup, limits, reconnection behavior, and local-only restrictions, and the
-[WebSocket risk/return and cost/return report (Japanese)](docs/websocket-risk-return-report.md)
+[WebSocket risk/return and cost/return report (Japanese)](docs/application-study/websocket-risk-return-report.md)
 for the analysis distilled from these implementations.
 The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
 updates and POST for sending; its latest 50 messages are in-memory and EventSource
 handles reconnection. All three chat implementations are independent and local-only.
-The `StdExt` library prototypes the report's main proposal: an upgrade/handoff
-API for `Std.Http.Server` plus an RFC 6455 WebSocket layer on top of it. The
-`/ws-echo/socket` endpoint runs over this API on the same port as the HTTP
-server (no port discovery or tunnel needed) and is covered by
-`tests/test_ws_std.py`. See the
-[StdExt design notes (Japanese)](docs/std-websocket-extension.md).
+The derived `StdExt` WebSocket work has a same-port `/ws-echo/socket`
+demonstrator covered by `tests/test_ws_std.py`. Its current implementation,
+separate lifecycle prototype, limitations, and next steps are described in the
+[WebSocket development track (Japanese)](docs/std-websocket/README.md);
+the prototype is not yet wired into the live transport.
 The order book starts with synthetic bids and asks, matches crossing limit
 orders by price then order ID (FIFO), and keeps the latest 20 trades in memory.
 Prices are accepted to two decimal places and quantities are whole numbers.
@@ -201,7 +218,7 @@ a 300ms debounce), chosen to avoid extra dependencies, not because Lake requires
 polling. Lake checks rebuild requirements when invoked but has no built-in
 watch command in the pinned version. External OS notifications such as Linux
 inotify, or watchdog/watchfiles, are alternatives. Browser status polling is
-separate. See the [design rationale (Japanese)](docs/module-reload.md)
+separate. See the [design rationale (Japanese)](docs/application-study/module-reload.md)
 for trade-offs and the measurement-driven optimization policy.
 
 The watcher is a loopback-only, GET/HEAD development preview proxy with
@@ -269,7 +286,7 @@ the server's Lean runtime.
 
 Without the watcher, SQLite rendering, server-side helpers, or fixture changes
 require rebuilding and restarting the server; rebuilding does not update an already running process or
-reseed its in-memory database. See the [module reload investigation (Japanese)](docs/module-reload.md)
+reseed its in-memory database. See the [module reload investigation (Japanese)](docs/application-study/module-reload.md)
 for the update boundaries, verified behavior, and troubleshooting steps.
 
 The server sends a JSON context on stdin containing `requestId`, the URL `path`,

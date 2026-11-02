@@ -1,8 +1,10 @@
 # WebSocketの終了・寿命管理: 問題定義と証明に向けた設計方針
 
+所属: [Std拡張WebSocket開発](./README.md)。問題定義・設計根拠の詳細資料。
+
 2026-11-02作成。状態は**設計案**。ここに記す保証は現在の実装が満たすと確認された
 性質ではなく、これから実装・検証する目標である。初稿ではコードを変更しなかった。
-後続の[純粋モデル試作](./websocket-prototype-results.md)で局所補題とテストを検証したが、
+後続の[純粋モデル試作](websocket-prototype-results.md)で局所補題とテストを検証したが、
 実Transport接続・設計全体の証明は未完了である。
 モデル構成はB（直積状態・操作台帳）を本体とし、Cの最小の保持不変条件を取り込む方針を採用した。
 具体的な動作契約は、既存慣習と実装可能性の比較を経て別途確定する。
@@ -11,11 +13,11 @@
 公開APIの分離は保留し、サーバー全体だけでなくTransport・connectionの終了契約との
 整合を優先する。下位の能力と完了の意味を対応付けてから、実行器の設計を確定する。
 
-関連: [実装評価](./websocket-evaluation.md)、
-[接続移譲API](./std-websocket-extension.md)、
-[依存先契約と証明の前提調査](./websocket-dependency-contracts.md)、
-[三つのモデル案と比較](./websocket-model-proposals.md)、
-[動作方針と既存慣習の調査](./websocket-behavior-policy.md)。
+関連: [実装評価](websocket-evaluation.md)、
+[接続移譲API](std-websocket-extension.md)、
+[依存先契約と証明の前提調査](websocket-dependency-contracts.md)、
+[三つのモデル案と比較](websocket-model-proposals.md)、
+[動作方針と既存慣習の調査](websocket-behavior-policy.md)。
 
 ## 1. 問題定義
 
@@ -30,15 +32,15 @@ upgrade後に複数タスクから操作できるようにしたことで、拡�
 
 ### 現在確認できる事実
 
-- [sendDataFrame](../StdExt/Http/WebSocket/Connection.lean) は `closeSent` の確認と
+- [sendDataFrame](../../StdExt/Http/WebSocket/Connection.lean) は `closeSent` の確認と
   送信を別操作として行う。確認後に別タスクがCloseを送り、その後データが送られる
   順序を排除できない。ピアのCloseへの自動応答とも競合し得る。
 - `sendCloseOnce` のフラグ更新は原子的だが、他の送信との直列化はしない。
   フラグはCloseの送信完了を意味せず、送信失敗時も単独では結果を表せない。
 - `WebSocket.close` はフレーム送信であって、オブジェクト解放でもTCP切断でもない。
-- [Upgraded.ofTransport](../StdExt/Http/Server/Upgrade.lean) の送受信クロージャは
+- [Upgraded.ofTransport](../../StdExt/Http/Server/Upgrade.lean) の送受信クロージャは
   socketへの参照を保持する。参照の生存と、接続を操作してよい期間は同一ではない。
-- [performUpgrade](../StdExt/Http/Server/Connection.lean) は継続自身を待つが、
+- [performUpgrade](../../StdExt/Http/Server/Connection.lean) は継続自身を待つが、
   継続がWebSocketを渡した独立タスクすべてを追跡・joinする仕組みではない。
 - Lean 4.35.0の `Transport.close` は既定で何もしない。標準のTCPインスタンスは
   これを上書きせず、FD解放をfinalizerに委ねる。したがって、現在の
@@ -49,7 +51,7 @@ upgrade後に複数タスクから操作できるようにしたことで、拡�
 非同期native I/O完了までのsocket・バッファ保持、finalizerとの競合、
 FD再利用への対処は、native実装まで確認する必要がある。
 当初はローカルツールチェーンに該当nativeソースがなく未確認だった。
-後続の[依存先契約調査](./websocket-dependency-contracts.md)で対応版の公開ソースを取得し、
+後続の[依存先契約調査](websocket-dependency-contracts.md)で対応版の公開ソースを取得し、
 送信中のsocket・バッファ保持、受信中の参照保持、finalizerのclose callbackでの解放を
 確認した。実行環境のlibuv版も1.48.0と測定した。ただしnative全体の形式検証や、
 全異常経路・FD再利用・実行バイナリとの完全な対応の検証は未実施である。
@@ -180,7 +182,7 @@ native呼び出しは明確な境界に閉じ込め、信頼する仕様を列�
 
 ## 6. Transportに求める契約と検証
 
-先に[依存先契約の台帳](./websocket-dependency-contracts.md)のC1〜C7とA1〜A8を参照する。
+先に[依存先契約の台帳](websocket-dependency-contracts.md)のC1〜C7とA1〜A8を参照する。
 特に `Client.shutdown` はwrite側の半閉鎖、`uv_cancel` はTCP writeの汎用中断ではない。
 タイムアウトを設けたことだけで、保留I/Oの完了・解放可能性を仮定しない。
 

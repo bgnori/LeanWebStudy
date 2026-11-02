@@ -1,5 +1,7 @@
 # モジュール更新後に SQLite ページが変わらない場合
 
+所属: [Web ApplicationのStudy](./README.md)。
+
 ## 結論
 
 **このリポジトリの実装では、Lithe とページの動的読み込みの相性が悪いという
@@ -32,14 +34,14 @@ Lean 4.35.0、固定された Lithe `197bc2d6ba0f79c307cf01e2426c84299a1c23d6` �
   → Cache-Control: no-store を付けて応答
 ```
 
-- [DevPages.render](../LeanWebStudy/DevPages.lean) は毎回 `IO.Process.output` で
+- [DevPages.render](../../LeanWebStudy/DevPages.lean) は毎回 `IO.Process.output` で
   worker を起動します。ページソースやレンダリング結果のキャッシュはありません。
-- [Lithe の dispatch](../.lake/packages/lithe/Lithe/Runtime/Dispatch.lean) は
+- [Lithe の dispatch](../../.lake/packages/lithe/Lithe/Runtime/Dispatch.lean) は
   ルートに一致する handler または fallback をそのリクエストで実行します。
   この経路に応答キャッシュはありません。
-- [ルート登録と pageContext](../LeanWebStudy.lean) では `/health`、`/api/query` を
+- [ルート登録と pageContext](../../LeanWebStudy.lean) では `/health`、`/api/query` を
   明示登録し、ページは fallback に渡します。ページの追加ごとのルート登録は不要です。
-- [Main](../Main.lean) は起動時に database、counter、handler を作り、そのまま
+- [Main](../../Main.lean) は起動時に database、counter、handler を作り、そのまま
   サーバーを動かします。実行中の handler を新しいバイナリーへ差し替える処理はありません。
 
 これは **別プロセスでのページソース再実行** です。サーバープロセス内での
@@ -49,25 +51,25 @@ Lithe の一般的な動的ライブラリー交換の可否まで検証した�
 
 ## SQLite サンプルで特に起きやすい理由
 
-[SQLite users ページ](../Pages/sqlite/users.lean) と
-[SQLite index ページ](../Pages/sqlite/index.lean) は主に外枠を組み立て、
+[SQLite users ページ](../../Pages/sqlite/users.lean) と
+[SQLite index ページ](../../Pages/sqlite/index.lean) は主に外枠を組み立て、
 `context.usersHtml` と `context.sqliteDemoHtml` を挿入します。
 SQL の説明、Statement、パラメーター、実行結果の HTML はページ側ではなく、
-[サーバーの sqliteDemoHtml / pageContext](../LeanWebStudy.lean) にあります。
+[サーバーの sqliteDemoHtml / pageContext](../../LeanWebStudy.lean) にあります。
 
 今回のコミットでは、同名の2人から email 列だけを SELECT する例とその HTML、
-[SampleData](../LeanWebStudy/SampleData.lean) の fixture などが変更されています。
+[SampleData](../../LeanWebStudy/SampleData.lean) の fixture などが変更されています。
 これらは常駐サーバーに組み込まれる変更です。**ページを再読み込みするだけでは
 追加された SELECT 例や変更された fixture は反映されません。**
 
-さらに [Database.seededMemory](../LeanWebStudy/Database.lean) は起動時に一度だけ
+さらに [Database.seededMemory](../../LeanWebStudy/Database.lean) は起動時に一度だけ
 `:memory:` データベースを作り、fixture を投入します。`lake build` に成功しても、
 すでに動いているプロセスのコードやデータベースは変わりません。新しいバイナリーで
 再起動する必要があり、その際に DB とリクエスト番号はリセットされます。
 
 ### 新旧の Context が混ざる場合
 
-[Page.Context の JSON decoder](../LeanWebStudy/Page.lean) は、
+[Page.Context の JSON decoder](../../LeanWebStudy/Page.lean) は、
 `sqliteDemoHtml` フィールドがない入力を互換性のため `""` として受け入れます。
 そのため、古い Context producer と新しいページ・decoder の組み合わせでは、
 HTTP エラーにならず、SQLite の説明部分だけが欠けることがあります。
@@ -173,13 +175,13 @@ import 先をビルドせずページだけを実行すると、旧成果物を�
 | ビルド済みの現行サーバーをポート19183で新規起動して `/sqlite/users` にアクセス | 新しい email SELECT の見出し、正確に2行の email 結果、`no-store` を確認 |
 | `sqliteDemoHtml` を含まない JSON を現行 SQLite ページへ渡す | 実行は成功し、デモ部分は非表示。互換 decoder の挙動を確認 |
 
-既存の [dev-pages-smoke.sh](../tests/dev-pages-smoke.sh) が保証しているのは、
+既存の [dev-pages-smoke.sh](../../tests/dev-pages-smoke.sh) が保証しているのは、
 ページ本体の再読み込みです。サーバーモジュールの自動差し替えや、import 先の
 自動ビルドを検証するテストではありません。
 
 ## 追記：保存だけで反映する開発ループ
 
-調査後、第1段階として [tools/dev.py](../tools/dev.py) を追加しました。
+調査後、第1段階として [tools/dev.py](../../tools/dev.py) を追加しました。
 `python3 tools/dev.py` で開発用プレビューを起動すると、保存検知 →
 ビルド → 全ページの型チェック → サーバー再起動 → health 確認 →
 ブラウザー自動更新を行います。失敗・更新中・監視との切断は画面に明示します。
@@ -189,7 +191,7 @@ import 先をビルドせずページだけを実行すると、旧成果物を�
 毎回インメモリー DB とカウンターがリセットされます。
 画面の URL・スクロール位置は保ち、フォーム入力などは保持しません。
 更新途中の旧画面は残しますが、新旧コード混在を避けるため旧バックエンドは
-ビルド前に停止します。詳細と制限は [README](../README.md#save-to-preview-development-loop)
+ビルド前に停止します。詳細と制限は [README](../../README.md#save-to-preview-development-loop)
 を参照してください。
 
 ### 設計判断：Lake の変更判定とファイル監視を分ける
@@ -219,7 +221,7 @@ Lake の CLI ソースで確認）。一方、`lake build` は実行時に入力
 なお、現 supervisor はプロセスグループの停止に POSIX API を使うため、
 ポーリング方式の採用だけでツール全体の Windows 対応を保証するものではありません。
 
-[watch / snapshot の実装](../tools/dev.py) は、待機中に250msの間隔で
+[watch / snapshot の実装](../../tools/dev.py) は、待機中に250msの間隔で
 対象を走査し、各ファイルの更新時刻と SHA-256 を比較します。
 検知後は300msの静穏区間で連続保存をまとめます。
 走査時間も加わるため、250ms以内の検知を保証する値ではありません。
@@ -257,16 +259,16 @@ Context の新旧混在を明示的に検出したい場合は、バージョン
 
 ## 根拠
 
-- [Main.lean](../Main.lean)：起動時の DB 作成、handler 作成、ページディレクトリー選択。
-- [LeanWebStudy.lean](../LeanWebStudy.lean)：サーバー側の SQLite HTML 生成、
+- [Main.lean](../../Main.lean)：起動時の DB 作成、handler 作成、ページディレクトリー選択。
+- [LeanWebStudy.lean](../../LeanWebStudy.lean)：サーバー側の SQLite HTML 生成、
   Context 作成、ページ応答の `no-store`、Lithe へのルート登録・dispatch。
-- [DevPages.lean](../LeanWebStudy/DevPages.lean)：リクエストごとのページ探索と
+- [DevPages.lean](../../LeanWebStudy/DevPages.lean)：リクエストごとのページ探索と
   `lake env lean --run` worker。
-- [Page.lean](../LeanWebStudy/Page.lean)：Context の互換 decoder とページ実行プロトコル。
-- [Database.lean](../LeanWebStudy/Database.lean) /
-  [SampleData.lean](../LeanWebStudy/SampleData.lean)：起動時の fixture 投入。
-- [固定依存の Lithe dispatch](../.lake/packages/lithe/Lithe/Runtime/Dispatch.lean) /
-  [Router](../.lake/packages/lithe/Lithe/Router/Router.lean)：handler の保持・選択・実行。
+- [Page.lean](../../LeanWebStudy/Page.lean)：Context の互換 decoder とページ実行プロトコル。
+- [Database.lean](../../LeanWebStudy/Database.lean) /
+  [SampleData.lean](../../LeanWebStudy/SampleData.lean)：起動時の fixture 投入。
+- [固定依存の Lithe dispatch](../../.lake/packages/lithe/Lithe/Runtime/Dispatch.lean) /
+  [Router](../../.lake/packages/lithe/Lithe/Router/Router.lean)：handler の保持・選択・実行。
   これらのローカルリンクは依存取得後に参照可能。
 - インストール済み Lean 4.35.0 の `Lake/CLI/Actions.lean` の `env` / `exe` 実装、
   および `lake help env` / `lake help exe`：

@@ -1,7 +1,10 @@
 # WebSocket チャットの技術選定と使い方
 
+所属: [Web ApplicationのStudy](./README.md)。既存方式の利用・比較の記録。
+Std拡張そのものの設計・証明の進捗は[別の開発トラック](../std-websocket/README.md)で扱う。
+
 実装を通して得られた知見のリスク・リターン / コスト・リターン分析は
-[websocket-risk-return-report.md](./websocket-risk-return-report.md) を参照。
+[websocket-risk-return-report.md](websocket-risk-return-report.md) を参照。
 
 ## 要件と既存構成
 

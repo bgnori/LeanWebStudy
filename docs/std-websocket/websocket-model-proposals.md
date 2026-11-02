@@ -1,16 +1,18 @@
 # WebSocket寿命管理: 三つのモデル案と比較
 
+所属: [Std拡張WebSocket開発](./README.md)。代替案とモデル選定の記録。
+
 2026-11-02作成。比較を経て、**Bを本体とし、Cの最小の保持不変条件を取り込む構成を
 採用方針とする。純粋モデルの限定的な試作・局所補題・テストは実施済み**。
-[試作結果とTransport接続条件](./websocket-prototype-results.md)を参照。
+[試作結果とTransport接続条件](websocket-prototype-results.md)を参照。
 本書の設計全体の実装・証明が完了したわけではない。動作原則の合意状況とHTTP整合の条件は
-[動作方針](./websocket-behavior-policy.md)を参照。公開API・詳細契約は未確定。
+[動作方針](websocket-behavior-policy.md)を参照。公開API・詳細契約は未確定。
 記載する型・述語は概念表記で、コンパイル確認済みのLeanコードではない。
 比較時の代替案も残す。公開API・既存実装は変更しない。
 
-前提: [問題定義・設計方針](./websocket-lifetime-design.md)、
-[依存先契約](./websocket-dependency-contracts.md)、
-[動作方針と既存慣習の調査](./websocket-behavior-policy.md)。
+前提: [問題定義・設計方針](websocket-lifetime-design.md)、
+[依存先契約](websocket-dependency-contracts.md)、
+[動作方針と既存慣習の調査](websocket-behavior-policy.md)。
 コンベンションの参照は実装可能性を必須条件とし、Lean本体（Init・Std）を最優先、
 次にws-leanと他言語の主要実装を同程度、その後に他の限定的な実装とする。
 定理ID S1〜S6・R1・B1・L1は設計方針第8.3節に対応する。
@@ -290,7 +292,7 @@ Aを正式な抽象仕様として残す場合は、Bの履歴をAへ写す対�
 
 ## 8. 選択後の最小作業と未保証範囲
 
-1. [既存慣習の調査](./websocket-behavior-policy.md)を踏まえて、第1節の動作方針、
+1. [既存慣習の調査](websocket-behavior-policy.md)を踏まえて、第1節の動作方針、
    結果型、静止と解放の観測方法を合意する。
 2. 採用するBは、write/read各一枠、要求キュー、未実行予約、Close事実だけで始める。
    close後に残る利用者向け受信データの配送・破棄方針と保持量も決める。

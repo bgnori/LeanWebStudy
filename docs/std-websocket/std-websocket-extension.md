@@ -1,19 +1,24 @@
 # StdExt: `Std.Http.Server` 接続移譲 API と WebSocket 実装
 
-2026-11-02 作成。[websocket-risk-return-report.md](./websocket-risk-return-report.md)
+所属: [Std拡張WebSocket開発](./README.md)。現行APIの説明であり、
+寿命管理の純粋モデルが実通信経路へ組み込まれたことは意味しない。
+
+2026-11-02 作成。[websocket-risk-return-report.md](../application-study/websocket-risk-return-report.md)
 の提案 6.1-1(`Std.Http.Server` の Upgrade / 接続移譲 API)と付録 A.5 の適用案を、
 本リポジトリ内の拡張ライブラリー `StdExt` として実装したもの。これにより
 WebSocket を **HTTP と同一ポート** で提供でき、レポートが固定費として挙げた
 別リスナー・ポート発見・開発トンネル・二重 Origin 検証が不要になる。
 動作実証は `/ws-echo/socket`(エコーエンドポイント)と
-[tests/test_ws_std.py](../tests/test_ws_std.py) にある。
+[tests/test_ws_std.py](../../tests/test_ws_std.py) にある。
 
 ## 1. 配置と名前空間のポリシー
 
 Lean 4.35.0 の `Std` はツールチェーンに同梱されており直接編集できないため、
 拡張は Lake ライブラリー `StdExt` として置く。**モジュール名のみ** `StdExt`
 接頭辞を持ち、**名前空間は拡張先の `Std.Http.*` をそのまま使う**。upstream へ
-提案する際はファイル名の変更だけで済む。
+提案時の名前空間移行を小さくする狙いである。ただし独立化・本家への提案には、
+接続終了契約・互換性・接続ループの共通化等の検討が別途必要で、
+ファイル名の変更だけでupstream化が完了するわけではない。
 
 | モジュール | 内容 | 名前空間 |
 | --- | --- | --- |
@@ -89,7 +94,7 @@ inductive UpgradableResponse (β : Type) where
   すべての接続利用が終了したとは言えない。
 
 この制約とsend/close競合を、プロトコル順序だけでなく寿命管理の問題として扱う。
-[問題定義と証明に向けた設計方針](./websocket-lifetime-design.md)に、
+[問題定義と証明に向けた設計方針](websocket-lifetime-design.md)に、
 単一の接続所有タスク、状態遷移の証明、native境界の検証を含む案を記す。
 これは設計案であり、現行実装の保証ではない。
 
@@ -164,19 +169,19 @@ Origin欠落だけを許可している。TLS終端やCodespaces転送先で使�
 
 全許可維持・必須設定・全拒否・same-origin等の選択肢、欠落時の方針、
 互換性とプロキシのトレードオフは
-[評価レポートのOriginポリシー比較](./websocket-evaluation.md#originポリシーの選択肢とトレードオフ)
-と[Lean・他言語の設計方針との比較](./websocket-evaluation.md#外部視点-lean-4の設計スタイルと他言語のライブラリ)
+[評価レポートのOriginポリシー比較](websocket-evaluation.md#originポリシーの選択肢とトレードオフ)
+と[Lean・他言語の設計方針との比較](websocket-evaluation.md#外部視点-lean-4の設計スタイルと他言語のライブラリ)
 を参照。低レベルのプロトコル核とアプリ向けの安全な入口は分けて評価し、
 ポリシー必須化を全層の前提とはしない。現時点では既定値やAPIの挙動を変更していない。
 
 ## 4. テスト
 
-- **Lean 単体テスト**([LeanWebStudyTests.lean](../LeanWebStudyTests.lean)):
+- **Lean 単体テスト**([LeanWebStudyTests.lean](../../LeanWebStudyTests.lean)):
   SHA-1(FIPS 180-4 ベクター)、Base64(RFC 4648 §10 ベクター)、
   `Sec-WebSocket-Accept`(RFC 6455 §1.3 の実例)、フレームの往復と
   RFC 6455 §5.7 のマスク例、フレーム違反、クローズコード、
   ハンドシェイク検証の全拒否経路。
-- **結合テスト**([tests/test_ws_std.py](../tests/test_ws_std.py)、
+- **結合テスト**([tests/test_ws_std.py](../../tests/test_ws_std.py)、
   標準ライブラリーのみ、24 ケース):同一ポートでのハンドシェイク、
   テキスト・バイナリー(0〜70000 バイト、16/64 ビット拡張長)、断片化、
   断片間の制御フレーム、Ping/Pong、クローズハンドシェイク、先読みバイトの

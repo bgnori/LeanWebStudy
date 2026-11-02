@@ -1,15 +1,17 @@
 # WebSocketの動作方針: 利用者の期待・既存慣習・実装可能性
 
+所属: [Std拡張WebSocket開発](./README.md)。動作契約の合意・保留事項の参照先。
+
 2026-11-02調査。モデル構成は**B（直積状態・操作台帳）+ Cの最小の保持不変条件を採用方針**
 とする。動作方針のうち、正常closeでの受理済みデータ排出、
 ピアClose・障害・abortでの未着手取消、取消・期限とI/O停止・回収完了の区別は合意済み。
 **公開APIの分離は保留**とし、既存HTTPインターフェースとの整合を先に確認する。
-詳細な結果型・期限等は未確定。[純粋モデルの限定的試作](./websocket-prototype-results.md)は
+詳細な結果型・期限等は未確定。[純粋モデルの限定的試作](websocket-prototype-results.md)は
 実施済みだが、実行器・実Transport接続と契約全体の証明は未完了である。
 
-関連: [モデル比較](./websocket-model-proposals.md)、
-[寿命管理の設計](./websocket-lifetime-design.md)、
-[依存先契約](./websocket-dependency-contracts.md)。
+関連: [モデル比較](websocket-model-proposals.md)、
+[寿命管理の設計](websocket-lifetime-design.md)、
+[依存先契約](websocket-dependency-contracts.md)。
 
 ## 1. 判断の順序と調査の限界
 
@@ -307,9 +309,9 @@ stable/latestおよびWeb標準は更新され得る公開契約であり、固�
 - [L4] [Lean 4.35.0: ContextAsync](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Async/ContextAsync.lean#L15)
 - [L5] [Lean 4.35.0: Async.race](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Async/Basic.lean#L940)
 - [L6] [ws-lean固定版: Connection](https://github.com/pb64-lean/ws-lean/blob/2a6665a120993533122bcbfa076ef35c17025bea/Ws/Connection.lean)（submitDataOpenIO: 279行、submitClose: 390行、writerLoop: 584行、close/wait: 1377行以降）
-- [L7] [本拡張: Connection](../StdExt/Http/WebSocket/Connection.lean)
-- [L8] [本拡張: serveUpgradable](../StdExt/Http/Server/Serve.lean)
-- [L9] [本拡張: upgrade継続の型](../StdExt/Http/Server/Upgrade.lean)、[performUpgradeと接続終了処理](../StdExt/Http/Server/Connection.lean)
+- [L7] [本拡張: Connection](../../StdExt/Http/WebSocket/Connection.lean)
+- [L8] [本拡張: serveUpgradable](../../StdExt/Http/Server/Serve.lean)
+- [L9] [本拡張: upgrade継続の型](../../StdExt/Http/Server/Upgrade.lean)、[performUpgradeと接続終了処理](../../StdExt/Http/Server/Connection.lean)
 - [L10] [Lean 4.35.0: Transport.close](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Transport.lean#L45)
 - [L11] [Lean 4.35.0: HTTP接続の終了処理](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Http/Server/Connection.lean#L530)
 - [L12] [Lean 4.35.0: TCP.Client.shutdown](https://github.com/leanprover/lean4/blob/v4.35.0/src/Std/Async/TCP.lean#L220)
