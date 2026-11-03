@@ -72,10 +72,31 @@ private def graceful := run [
 -- Release is terminal: a late peer Close cannot reserve new control I/O.
 #guard fails [.localClose, .reserve, .start 0, .writeDone 0 .written,
   .backendDone, .release, .peerClose] .closed
-#guard match run [.beginRead, .deadline, .backendDone, .readDone 0,
+#guard match run [.beginRead, .deadline, .backendDone, .readDone 0 .cancelled,
     .controlDone 1 .cancelled, .release] with
   | .ok (s, effects) => s.released &&
       effects == [.read 0, .control 1 .abort, .releaseOwned]
+  | _ => false
+-- Data is delivered to the frame layer while the session is live,
+-- but a stopping session drops late data instead of delivering it.
+#guard match run [.beginRead, .readDone 0 (.data 5), .beginRead] with
+  | .ok (s, effects) => s.reading == some 1 &&
+      effects == [.read 0, .deliver 0 5, .read 1]
+  | _ => false
+#guard match run [.beginRead, .abort, .readDone 0 (.data 5)] with
+  | .ok (_, effects) => effects == [.read 0, .control 1 .abort]
+  | _ => false
+-- A read cancellation is only legal while stopping.
+#guard fails [.beginRead, .readDone 0 .cancelled] .invalidEvent
+-- EOF ends the inbound direction: no further read can start.
+#guard fails [.beginRead, .readDone 0 .eof, .beginRead] .closed
+-- A read failure is backend trouble: unstarted work is cancelled and an
+-- abort is requested, like a write failure.
+#guard match run [.submit 2, .beginRead, .readDone 1 .failed,
+    .controlDone 2 .cancelled, .backendDone, .release] with
+  | .ok (s, effects) => s.released && s.results == [(0, .cancelled)] &&
+      effects == [.accepted 0, .read 1, .result 0 .cancelled,
+        .control 2 .abort, .releaseOwned]
   | _ => false
 #guard match run [.localClose, .localClose, .reserve, .start 0,
     .peerClose, .writeDone 0 .written, .peerClose, .controlStart 1,
@@ -99,6 +120,7 @@ private def validEffects (before : State) (effects : List Effect) : Bool :=
   effects.all fun effect => match effect with
     | .write ⟨_, .data ..⟩ => !before.closeStarted && !before.stopping && !before.peerClosed
     | .write ⟨_, .close⟩ => !before.closeStarted && before.writing.isNone
+    | .deliver .. => !before.stopping && !before.released
     | .control _ .abort => !before.stopping && !before.backendEnded
     | .control _ .finishSend =>
         before.closeStarted && !before.stopping && !before.backendEnded
@@ -120,7 +142,9 @@ private def explore (depth : Nat) (s : State) (history : List Event) : IO Nat :=
       .submit 3, .submit 6, .localClose, .peerClose, .abort, .deadline,
       .reserve, .start reservedId, .writeDone writeId .written,
       .writeDone writeId .failed, .writeDone writeId .cancelled,
-      .beginRead, .readDone readId, .backendDone, .release,
+      .beginRead, .readDone readId (.data 3), .readDone readId .eof,
+      .readDone readId .cancelled, .readDone readId .failed,
+      .backendDone, .release,
       .controlStart cid0, .controlStart cid1,
       .controlDone cid0 .written, .controlDone cid0 .cancelled,
       .controlDone cid0 .failed, .controlDone cid1 .written,

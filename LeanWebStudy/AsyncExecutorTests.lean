@@ -86,6 +86,7 @@ private def gracefulScenario : IO Unit := do
     closeChan (Mock.Client.getSendChan client)
     let data ← expect "awaitRead" (← session.awaitRead)
     check "read EOF" data.isNone
+    discard <| expect "backendEnded" (← session.backendEnded)
     discard <| expect "release" (← session.release)
     checkReplay session
     let final ← session.model
@@ -128,6 +129,7 @@ private def deadlineScenario : IO Unit := do
     -- The backend abort resolved the pending read as EOF.
     let data ← expect "awaitRead" (← session.awaitRead)
     check "read resolved by abort" data.isNone
+    discard <| expect "backendEnded" (← session.backendEnded)
     discard <| expect "release" (← session.release)
     checkReplay session
     check "queued request cancelled"

@@ -90,13 +90,23 @@ private def fails (commands : List Command) (expected : Failure) : Bool :=
 #guard fails [.beginRead, .deadline, .withdrawControl 0, .backendEnds,
   .release] (.rejected .busy)
 #guard match run [.beginRead, .deadline, .withdrawControl 0, .backendEnds,
-    .completeRead, .release] with
+    .completeRead .cancelled, .release] with
   | .ok ex => ex.released
   | _ => false
 
 -- The mock backend never cancels a write unprompted.
 #guard fails [.send 3, .pump, .dispatch, .completeWrite .cancelled]
   (.rejected .invalidEvent)
+
+-- Inbound data is delivered while live and dropped once stopping.
+#guard match run [.beginRead, .completeRead (.data 3), .beginRead,
+    .deadline, .completeRead (.data 5), .registerControl 0,
+    .completeControl 0 .written, .backendEnds, .release] with
+  | .ok ex => ex.released && ex.inbox == [(0, 3)]
+  | _ => false
+
+-- EOF ends the inbound direction; no further read can start.
+#guard fails [.beginRead, .completeRead .eof, .beginRead] (.rejected .closed)
 
 -- Release is terminal at the executor level as well.
 #guard fails [.close, .pump, .dispatch, .completeWrite .written,
@@ -106,7 +116,9 @@ private def commands : List Command := [
   .send 3, .send 6, .abandonWaiter, .close, .pump, .dispatch,
   .injectRegistrationFault,
   .completeWrite .written, .completeWrite .failed, .completeWrite .cancelled,
-  .beginRead, .completeRead, .peerClose, .deadline, .abortSession, .backendEnds,
+  .beginRead, .completeRead (.data 3), .completeRead .eof,
+  .completeRead .cancelled, .completeRead .failed,
+  .peerClose, .deadline, .abortSession, .backendEnds,
   .registerControl 0, .registerControl 1, .withdrawControl 0, .withdrawControl 1,
   .completeControl 0 .written, .completeControl 0 .failed,
   .completeControl 0 .cancelled, .completeControl 1 .written,

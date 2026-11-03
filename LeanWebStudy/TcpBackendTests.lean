@@ -32,12 +32,12 @@ open Std.Http.WebSocket.Lifecycle.AsyncExecutor
 
 private def limits : Limits := ⟨2, 8⟩
 
-private def expect (what : String) (r : Except Error α) : Async α :=
+def expect (what : String) (r : Except Error α) : Async α :=
   match r with
   | .ok a => pure a
   | .error e => throw (IO.userError s!"{what} failed: {repr e}")
 
-private def expectError (what : String) (r : Except Error α) (expected : Error) :
+def expectError (what : String) (r : Except Error α) (expected : Error) :
     Async Unit :=
   match r with
   | .error e =>
@@ -45,11 +45,11 @@ private def expectError (what : String) (r : Except Error α) (expected : Error)
       throw (IO.userError s!"{what}: expected {repr expected}, got {repr e}")
   | .ok _ => throw (IO.userError s!"{what}: expected {repr expected}, got success")
 
-private def check (what : String) (cond : Bool) : Async Unit := do
+def check (what : String) (cond : Bool) : Async Unit := do
   unless cond do throw (IO.userError s!"check failed: {what}")
 
 /-- Connects a loopback socket pair on an ephemeral port. -/
-private def socketPair : Async (Socket.Client × Socket.Client) := do
+def socketPair : Async (Socket.Client × Socket.Client) := do
   let server ← Socket.Server.mk
   server.bind (.v4 ⟨IPv4Addr.ofParts 127 0 0 1, 0⟩)
   server.listen 8
@@ -66,7 +66,7 @@ The real Std TCP capabilities (D5): writes complete through the libuv promise,
 abort a pending plain recv or an in-flight write — so `abort` reports the
 incapacity instead of faking success.
 -/
-private def tcpBackend (sock : Socket.Client) : Backend where
+def tcpBackend (sock : Socket.Client) : Backend where
   write bytes := sock.send bytes
   read n := sock.recv? n
   finishSend := sock.shutdown
@@ -80,7 +80,7 @@ peer cooperation. The read buffer is only released after the race resolves —
 cancellation completes the operation, it does not free retained resources
 while the backend still holds them.
 -/
-private def cancellableTcpBackend (sock : Socket.Client) : IO Backend := do
+def cancellableTcpBackend (sock : Socket.Client) : IO Backend := do
   let cancel ← Std.CloseableChannel.new (α := Unit)
   return {
     write := fun bytes => sock.send bytes
@@ -142,6 +142,7 @@ private def probeSilentPeerRetention : IO Unit := do
     client.shutdown
     let data ← expect "awaitRead" (← session.awaitRead)
     check "read resolved only by peer EOF" data.isNone
+    discard <| expect "backendEnded" (← session.backendEnded)
     discard <| expect "release" (← session.release)
     let final ← session.model
     check "cancelled request settled" (final.results == [(1, .cancelled)])
@@ -178,6 +179,7 @@ private def probeGraceful : IO Unit := do
     client.shutdown
     let data ← expect "awaitRead" (← session.awaitRead)
     check "read EOF" data.isNone
+    discard <| expect "backendEnded" (← session.backendEnded)
     discard <| expect "release" (← session.release)
     let final ← session.model
     check "results written in order"
@@ -203,6 +205,7 @@ private def probeAbortRecoversRead : IO Unit := do
     -- The read resolves through our own action; the silent peer is not needed.
     let data ← expect "awaitRead" (← session.awaitRead)
     check "read recovered by abort" data.isNone
+    discard <| expect "backendEnded" (← session.backendEnded)
     discard <| expect "release" (← session.release)
     let final ← session.model
     check "cancelled request settled" (final.results == [(1, .cancelled)])
