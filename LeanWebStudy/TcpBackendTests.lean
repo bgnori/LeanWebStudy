@@ -72,6 +72,28 @@ private def tcpBackend (sock : Socket.Client) : Backend where
   finishSend := sock.shutdown
   abort := throw (IO.userError "Std TCP exposes no abort for pending I/O")
 
+/--
+A TCP backend whose reads go through the selector route, which probe 2 showed
+to be abandonable. `abort` closes a cancel channel; the losing recv selector
+is unregistered (`cancelRecv`), so a pending read resolves promptly without
+peer cooperation. The read buffer is only released after the race resolves —
+cancellation completes the operation, it does not free retained resources
+while the backend still holds them.
+-/
+private def cancellableTcpBackend (sock : Socket.Client) : IO Backend := do
+  let cancel ← Std.CloseableChannel.new (α := Unit)
+  return {
+    write := fun bytes => sock.send bytes
+    read := fun n =>
+      Selectable.one #[
+        .case (sock.recvSelector n) pure,
+        .case cancel.recvSelector
+          (fun _ => throw (IO.userError "read abandoned by abort"))]
+    finishSend := sock.shutdown
+    abort := do
+      if !(← cancel.isClosed) then cancel.close
+  }
+
 /-- Probe 1: peer half-close resolves a pending recv as EOF (and only that
 direction). -/
 private def probePeerEof : IO Unit := do
@@ -165,11 +187,36 @@ private def probeGraceful : IO Unit := do
         | .ok replayed => replayed == final
         | .error _ => false)
 
+/-- Probe 5: with the selector-based read, abort recovers the pending read
+promptly without any peer cooperation, so the session reaches quiet and
+releases in bounded time — busy does not persist. -/
+private def probeAbortRecoversRead : IO Unit := do
+  Async.block do
+    let (accepted, _client) ← socketPair
+    let session ← Session.new (← cancellableTcpBackend accepted) "CLOSE".toUTF8 limits
+    discard <| expect "beginRead" (← session.beginRead)
+    discard <| expect "submit" (← session.submit "abc".toUTF8)
+    discard <| expect "deadline" (← session.deadline)
+    -- The abort capability now exists: it abandons the read wait.
+    let kind ← expect "runControl" (← session.runControl)
+    check "abort control" (kind == .abort)
+    -- The read resolves through our own action; the silent peer is not needed.
+    let data ← expect "awaitRead" (← session.awaitRead)
+    check "read recovered by abort" data.isNone
+    discard <| expect "release" (← session.release)
+    let final ← session.model
+    check "cancelled request settled" (final.results == [(1, .cancelled)])
+    check "history replays"
+      (match Session.replay limits (← session.history) with
+        | .ok replayed => replayed == final
+        | .error _ => false)
+
 def test : IO Unit := do
   probePeerEof
   probeSelectorCancel
   probeSilentPeerRetention
   probeGraceful
-  IO.println "PASS: TCP capability probes (EOF, selector cancel, retention under silence, graceful)"
+  probeAbortRecoversRead
+  IO.println "PASS: TCP capability probes (EOF, selector cancel, retention under silence, graceful, abort recovery)"
 
 end LeanWebStudy.TcpBackendTests
