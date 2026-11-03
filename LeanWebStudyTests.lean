@@ -4,6 +4,7 @@ import LeanWebStudy.MockExecutorTests
 import LeanWebStudy.AsyncExecutorTests
 import LeanWebStudy.TcpBackendTests
 import LeanWebStudy.FrameAdapterTests
+import LeanWebStudy.LifecycleUpgradeTests
 
 open LeanWebStudy
 
@@ -328,6 +329,7 @@ def main : IO Unit := do
   AsyncExecutorTests.test
   TcpBackendTests.test
   FrameAdapterTests.test
+  LifecycleUpgradeTests.test
   testCloseReasons
   let testProduct : Page.ShopProduct := {
     slug := "test", name := "Test", category := "Demo", price := 100,
