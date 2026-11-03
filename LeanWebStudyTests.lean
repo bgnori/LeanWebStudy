@@ -2,6 +2,7 @@ import LeanWebStudy
 import LeanWebStudy.LifecycleTests
 import LeanWebStudy.MockExecutorTests
 import LeanWebStudy.AsyncExecutorTests
+import LeanWebStudy.TcpBackendTests
 
 open LeanWebStudy
 
@@ -324,6 +325,7 @@ def main : IO Unit := do
   LifecycleTests.test
   MockExecutorTests.test
   AsyncExecutorTests.test
+  TcpBackendTests.test
   testCloseReasons
   let testProduct : Page.ShopProduct := {
     slug := "test", name := "Test", category := "Demo", price := 100,
