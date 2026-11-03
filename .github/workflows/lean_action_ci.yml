@@ -22,5 +22,5 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_dev*.py'
       - name: WebSocket and SSE chat tests
         run: python3 -m unittest discover -s tests -p 'test_chat.py'
-      - name: WebSocket protocol and Autobahn-style conformance tests
-        run: python3 -m unittest discover -s tests -p 'test_ws_*.py'
+      - name: WebSocket echo endpoint regression (implementation lives in bgnori/same-port-websocket)
+        run: python3 -m unittest discover -s tests -p 'test_ws_std.py'

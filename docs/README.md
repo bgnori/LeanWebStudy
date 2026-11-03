@@ -5,7 +5,7 @@
 | 取り組み | 問い | 入口 |
 |---|---|---|
 | Web ApplicationのStudy | Leanでアプリをどう書き、既存ライブラリをどう組み合わせるか | [アプリStudy](./application-study/README.md) |
-| Std拡張WebSocketの開発 | Std HTTPへ自然に統合できるWebSocketをどう設計・実装・検証するか | [WebSocket開発](./std-websocket/README.md) |
+| Std拡張WebSocketの開発（移転済み） | 実装・文書は[bgnori/same-port-websocket](https://github.com/bgnori/same-port-websocket)へ移転。本リポジトリは利用側 | [移転案内](./std-websocket/README.md) |
 
 ## 派生の関係
 

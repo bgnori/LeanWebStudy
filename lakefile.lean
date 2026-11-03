@@ -28,7 +28,10 @@ require lithe from git
 require «ws-lean» from git
   "https://github.com/pb64-lean/ws-lean" @ "2a6665a120993533122bcbfa076ef35c17025bea"
 
-lean_lib StdExt
+-- The StdExt WebSocket implementation was extracted into its own repository;
+-- this app consumes it unchanged (module names stayed StdExt.* / Std.Http.*).
+require «same-port-websocket» from git
+  "https://github.com/bgnori/same-port-websocket" @ "83f9a7bf1fea5d0010f063f3f1273b204b5d3199"
 
 lean_lib LeanWebStudy
 
