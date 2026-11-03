@@ -1,5 +1,6 @@
 import LeanWebStudy
 import LeanWebStudy.LifecycleTests
+import LeanWebStudy.MockExecutorTests
 
 open LeanWebStudy
 
@@ -320,6 +321,7 @@ def expectFailure (action : IO α) (message : String) : IO Unit := do
 
 def main : IO Unit := do
   LifecycleTests.test
+  MockExecutorTests.test
   testCloseReasons
   let testProduct : Page.ShopProduct := {
     slug := "test", name := "Test", category := "Demo", price := 100,
