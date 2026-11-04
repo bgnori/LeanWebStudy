@@ -9,6 +9,10 @@
 リアルタイム Pong（`/pong/`）の実装経験に基づく。個別の技術選定の経緯と
 プロトコル仕様は [websocket-chat.md](websocket-chat.md) を参照。
 
+2026-11-04 追記: 作成後に `/chat-same-port/` が追加された。
+本資料の比較・結論は2026-11-02時点の記録であり、現在の同一ポート実装と
+プレビュー経路については [websocket-chat.md](websocket-chat.md) を参照。
+
 ## 1. 前提となる構造的制約
 
 分析の出発点は、WebSocket フレーム処理そのものではなく

@@ -207,6 +207,60 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(history["type"], "history")
         return client, history["messages"]
 
+    def connect_same_port(self, origin=None):
+        client = WebSocket(
+            self.http_port, origin or self.origin, "/chat-same-port/socket",
+            protocol=None,
+        )
+        self.addCleanup(client.close)
+        history = client.event()
+        self.assertEqual(history["type"], "history")
+        return client, history["messages"]
+
+    def test_same_port_chat_broadcast_history_validation_and_separation(self):
+        first, history = self.connect_same_port()
+        self.assertEqual(history, [])
+        second, history = self.connect_same_port()
+        self.assertEqual(history, [])
+
+        sent = first.send(
+            author="  Ada  ", message="<script>same-port</script>",
+            requestId="same-port-message",
+        )
+        event = first.event()
+        self.assertEqual(second.event(), event)
+        self.assertEqual(event["type"], "message")
+        self.assertEqual(event["author"], "Ada")
+        self.assertEqual(event["message"], sent["message"])
+        self.assertEqual(event["requestId"], sent["requestId"])
+
+        reconnect, history = self.connect_same_port()
+        self.assertEqual(history, [event])
+        reconnect.close()
+
+        first.send(author=" ", message="invalid")
+        self.assertEqual(first.event()["type"], "error")
+        first.send(message="after-invalid")
+        valid = first.event()
+        self.assertEqual(valid["id"], event["id"] + 1)
+        self.assertEqual(second.event(), valid)
+
+        _, other_history = self.connect()
+        self.assertFalse(any(
+            entry["requestId"] == sent["requestId"] for entry in other_history
+        ))
+        status, page = self.request("/chat-same-port/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"/chat-same-port/socket", page)
+        self.assertIn(b"new WebSocket(url)", page)
+
+    def test_same_port_chat_rejects_untrusted_origin(self):
+        with self.assertRaises((ConnectionError, OSError)):
+            WebSocket(
+                self.http_port, "http://evil.invalid",
+                path="/chat-same-port/socket", protocol=None,
+            )
+
     def connect_sse(self, port=None):
         client = SSEClient(port or self.http_port)
         self.addCleanup(client.close)

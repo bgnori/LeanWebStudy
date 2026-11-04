@@ -25,8 +25,9 @@ Std HTTP・Lithe、HTML生成、SQLite・MapleSQL、動的ページ更新、
 アプリの使い手に自然な形では扱いにくい、という問題が見えた。
 そこから[Std拡張WebSocket開発](../std-websocket/README.md)が派生した。
 
-- `/chat/`、`/chat-ws/`、`/chat-sse/`はアプリから見た方式比較。
-- `/ws-echo/socket`は派生側の同一ポート接続移譲の実証。完成済みの後継方式ではない。
+- `/chat/`、`/chat-ws/`、`/chat-same-port/`、`/chat-sse/`はアプリから見た方式比較。
+- `/chat-same-port/`は移転済みの `same-port-websocket` を使う同一ポートのチャット実装。
+- `/ws-echo/socket`は派生側の接続移譲のプロトコル実証。
 - Studyの通信方式を全面置換する決定はしていない。
 - リスク分析の付録には派生研究の初期案が含まれる。現在の採用方針は派生側を参照する。
 

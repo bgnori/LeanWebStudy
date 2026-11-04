@@ -21,12 +21,13 @@ def main (args : List String) : IO Unit := do
   let database <- Std.Mutex.new (← LeanWebStudy.Database.seededMemory)
   let orderBook <- Std.Mutex.new LeanWebStudy.OrderBook.initial
   let sseChat <- LeanWebStudy.SSEChat.new
+  let samePortChat <- LeanWebStudy.SamePortChat.new
   let chat ← LeanWebStudy.Chat.openServer port.toUInt16
     LeanWebStudy.Chat.response LeanWebStudy.Pong.response
   let chatPort ← LeanWebStudy.Chat.port chat
   let wsChat ← LeanWebStudy.WsChat.openServer port.toUInt16
   let handler := LeanWebStudy.WebHandler.create counter database orderBook pages sseChat
-    port.toUInt16 chatPort wsChat.port
+    port.toUInt16 chatPort wsChat.port samePortChat
   Std.Async.Async.block do
     let server <- Std.Http.Server.serveUpgradable
       (.v4 { addr := Std.Net.IPv4Addr.ofParts 127 0 0 1, port := port.toUInt16 })
@@ -35,6 +36,7 @@ def main (args : List String) : IO Unit := do
     IO.println s!"Pages: {pages.directory} (reloaded per request)"
     IO.println s!"WebSocket chat: ws://127.0.0.1:{chatPort}/chat/socket"
     IO.println s!"ws-lean chat: ws://127.0.0.1:{wsChat.port}/chat-ws/socket"
+    IO.println s!"same-port-websocket chat: ws://127.0.0.1:{port}/chat-same-port/socket"
     IO.println s!"WebSocket Pong: ws://127.0.0.1:{chatPort}/pong/socket"
     IO.println s!"SSE chat: http://127.0.0.1:{port}/chat-sse/"
     IO.println s!"WebSocket echo (same port, StdExt upgrade API): ws://127.0.0.1:{port}/ws-echo/socket"

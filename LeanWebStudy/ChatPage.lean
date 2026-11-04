@@ -148,8 +148,16 @@ private def client : String := r#"
 def main : IO Unit :=
   LeanWebStudy.Page.run fun context =>
     let wsLean := context.path == "/chat-ws/" || context.path == "/chat-ws"
-    let label := if wsLean then "ws-lean" else "libwebsockets"
-    let script := if wsLean then client.replace "/chat/socket" "/chat-ws/socket" else client
+    let samePort := context.path == "/chat-same-port/" || context.path == "/chat-same-port"
+    let label := if samePort then "same-port-websocket"
+      else if wsLean then "ws-lean" else "libwebsockets"
+    let socketPath := if samePort then "/chat-same-port/socket"
+      else if wsLean then "/chat-ws/socket" else "/chat/socket"
+    let script := client.replace "/chat/socket" socketPath
+    let script := if samePort then
+      script.replace "if (port) url.port = port;" ""
+        |>.replace "new WebSocket(url, \"leanwebstudy-chat\")" "new WebSocket(url)"
+      else script
     pure ("<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">" ++
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" ++
       s!"<meta name=\"leanwebstudy-chat-port\" content=\"{context.chatPort}\">" ++
@@ -164,7 +172,9 @@ def main : IO Unit :=
       "#error{color:#a51c30;min-height:1.5em}</style></head><body><main>" ++
       s!"<p><a href=\"/\">LeanWebStudy</a></p><h1>チャット ({label})</h1>" ++
       "<nav aria-label=\"チャット比較\"><a href=\"/chat/\">libwebsockets</a> | " ++
-      "<a href=\"/chat-ws/\">ws-lean</a> | <a href=\"/chat-sse/\">SSE</a></nav>" ++
+      "<a href=\"/chat-ws/\">ws-lean</a> | " ++
+      "<a href=\"/chat-same-port/\">same-port-websocket</a> | " ++
+      "<a href=\"/chat-sse/\">SSE</a></nav>" ++
       "<p>別のタブでも開いてみてください。送信すると全員にすぐ配信されます。</p>" ++
       "<p id=\"status\" role=\"status\">JavaScript を有効にしてください。</p>" ++
       "<button id=\"reconnect\" type=\"button\">再接続</button>" ++

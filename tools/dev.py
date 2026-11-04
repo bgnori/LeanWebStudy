@@ -308,18 +308,21 @@ def handler_for(development):
             )
             upgraded = False
             try:
-                endpoint_path = ("/chat-ws/endpoint" if path == "/chat-ws/socket"
-                                 else "/chat/endpoint")
-                connection.request("GET", endpoint_path)
-                response = connection.getresponse()
-                if response.status != 200:
-                    raise RuntimeError("WebSocket endpoint discovery failed")
-                endpoint = json.loads(response.read())
-                if not isinstance(endpoint, dict) or "port" not in endpoint:
-                    raise ValueError("Invalid WebSocket endpoint metadata")
-                port = endpoint["port"]
-                if type(port) is not int or not 1 <= port <= 65535:
-                    raise ValueError("Invalid WebSocket endpoint port")
+                if path == "/chat-same-port/socket":
+                    port = development.backend_port
+                else:
+                    endpoint_path = ("/chat-ws/endpoint" if path == "/chat-ws/socket"
+                                     else "/chat/endpoint")
+                    connection.request("GET", endpoint_path)
+                    response = connection.getresponse()
+                    if response.status != 200:
+                        raise RuntimeError("WebSocket endpoint discovery failed")
+                    endpoint = json.loads(response.read())
+                    if not isinstance(endpoint, dict) or "port" not in endpoint:
+                        raise ValueError("Invalid WebSocket endpoint metadata")
+                    port = endpoint["port"]
+                    if type(port) is not int or not 1 <= port <= 65535:
+                        raise ValueError("Invalid WebSocket endpoint port")
                 with socket.create_connection(("127.0.0.1", port), timeout=10) as upstream:
                     headers = [
                         f"GET {path} HTTP/1.1",
@@ -418,7 +421,10 @@ def handler_for(development):
                     b"<p>Waiting for a successful update.</p></body></html>", state,
                 )
                 return
-            if path in {"/chat/socket", "/chat-ws/socket", "/pong/socket"}:
+            if path in {
+                "/chat/socket", "/chat-ws/socket", "/chat-same-port/socket",
+                "/pong/socket",
+            }:
                 self.websocket(path)
                 return
             if path == "/chat-sse/events":

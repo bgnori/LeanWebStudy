@@ -61,6 +61,8 @@ HTTP は既存の Std / Lithe 構成のまま、WebSocket のプロトコル処�
 接続ループの独自実装、または別の HTTP サーバーへの移行を改めて比較する。
 `ws-lean` は有力なプロトコル層の候補だが、HTTP 接続の引き渡し経路は別途必要であり、
 公開 README ではプレリリースで高レベル API が変更され得るとされている。
+2026-11-04 追記: その後、移転済み `same-port-websocket` の Upgrade API を利用した
+`/chat-same-port/` を追加した。以下の初期判断は追加前の記録である。
 
 ## 候補とトレードオフ
 
@@ -75,7 +77,8 @@ HTTP は既存の Std / Lithe 構成のまま、WebSocket のプロトコル処�
 ## ws-lean 比較版（2026-11-02）
 
 `/chat/`（libwebsockets）を残し、`/chat-ws/`（ws-lean）を追加した。
-トップページと両チャットのリンクから切り替えられる。両方をそれぞれ二つのタブで
+その後 `/chat-same-port/`（same-port-websocket）も追加した。
+トップページと各チャットのリンクから切り替えられる。各方式をそれぞれ二つのタブで
 開いて比較する。履歴・連番・接続は実装ごとに独立しており、相互には配信しない。
 画面の再接続、送信確認、重複防止、HTML 安全表示は
 `LeanWebStudy/ChatPage.lean` を共有し、サーバーの JSON 検証は
@@ -142,6 +145,31 @@ Upgrade は10秒、書き込みは5秒、Close の応答待ちは最大1秒。
 受信タスクと期限付き処理は明示的に回収し、成功後に切断する残存タイマーを作らない。
 圧縮・TLS・HTTP/2 は交渉せず、この比較版も認証のないローカル学習用途に限定する。
 
+## same-port-websocket 比較版
+
+`/chat-same-port/` は移転済みの `same-port-websocket` が提供する
+`Std.Http.Server.serveUpgradable` と `Std.Http.WebSocket.upgrade` を使い、
+HTTP と同じポート上の `/chat-same-port/socket` で Upgrade する。
+別リスナー、ポート発見用 endpoint、通常起動時の追加ポート転送は不要。
+開発 watcher は安定したプレビュー URL からバックエンドの HTTP ポートへ
+WebSocket の handshake とバイト列をトンネルする。
+
+JSON 検証は `LeanWebStudy.Chat.response`、画面と再接続処理は
+`LeanWebStudy.ChatPage` を共有する。履歴は最新50件、最大64接続、
+接続ごとの送信待ち最大64イベント。フレーム／メッセージは8192バイトまでで、
+遅い接続は切断する。ブラウザーの Origin は HTTP と同じ loopback origin のみ許可し、
+Origin のない非ブラウザー接続も許可する。
+この endpoint は WebSocket サブプロトコルを要求せず、他方式とは別の履歴を持つ。
+
+| 項目 | libwebsockets `/chat/` | ws-lean `/chat-ws/` | same-port-websocket `/chat-same-port/` |
+| --- | --- | --- | --- |
+| WebSocket パス | `/chat/socket` | `/chat-ws/socket` | `/chat-same-port/socket` |
+| ポート | 別リスナー | 別リスナー | HTTP と同じ |
+| サブプロトコル | `leanwebstudy-chat` | `leanwebstudy-chat` | なし |
+| JSON 検証・画面 | 共通 | 共通 | 共通 |
+| 履歴 | 実装ごとに独立 | 実装ごとに独立 | 実装ごとに独立 |
+| プレビュー | endpoint 発見後にトンネル | endpoint 発見後にトンネル | HTTP ポートへ直接トンネル |
+
 libwebsockets はプロトコル処理、Lean は JSON の検証・配信イベント生成を担当する。
 最新 upstream のライセンスは公式サイト上 MIT。配布版のライセンスはその版の
 同梱文書を確認する（Ubuntu のパッケージには別の履歴上の表記があり得る）。
@@ -163,7 +191,7 @@ SSE はサーバーからクライアントへの一方向配信なので、投�
 
 SSE版もメモリー内の履歴は最新50件、最大64接続で、各接続の待ち行列には上限を設ける。
 履歴は再起動で消える。チャットの比較・学習用であり、認証や永続化を備えた本番用途ではない。
-WebSocket版は `/chat/` と `/chat-ws/` から利用できる。
+WebSocket版は `/chat/`、`/chat-ws/`、`/chat-same-port/` から利用できる。
 
 ## 起動
 
@@ -179,7 +207,8 @@ python3 tools/dev.py
 送信元を含む全接続へ即座に配信される。チャットの履歴は SQLite に保存せず、
 プロセスのメモリーに最新 50 件だけ保持し、再起動で消える。
 ws-lean 版は <http://127.0.0.1:8080/chat-ws/> を二つのタブで開く。
-watcher 経由でも既定の <http://127.0.0.1:8080/> から両方を選べる。
+同一ポート版は <http://127.0.0.1:8080/chat-same-port/> を二つのタブで開く。
+watcher 経由でも既定の <http://127.0.0.1:8080/> から各方式を選べる。
 
 <http://127.0.0.1:8080/pong/> を二つのタブまたは端末で開くと、通信対戦 Pong を
 遊べる。左側のプレイヤー1がボール状態をシミュレーションし、両プレイヤーの
@@ -189,26 +218,30 @@ watcher 経由でも既定の <http://127.0.0.1:8080/> から両方を選べる�
 
 ### ポートとプレビュー
 
-- 通常起動: HTTP は指定ポート、WebSocket は OS が選ぶ空きポートに bind。
-  両方とも `127.0.0.1` のみ。WebSocket URL は起動ログに表示され、
-  ページの meta にポートを渡す。別ターミナルでサービスを起動する必要はない。
+- 通常起動: HTTP は指定ポート。`/chat/`、`/chat-ws/`、`/pong/` の WebSocket は
+OS が選ぶ空きポートに bind し、`/chat-same-port/` は HTTP ポートを使う。
+すべて `127.0.0.1` のみ。別ターミナルでサービスを起動する必要はない。
 - watcher: ページのポート情報を空にし、ブラウザーは同じプレビュー URL の
   `/chat/socket`、`/chat-ws/socket` または `/pong/socket` に接続する。Python のプレビューが handshake
   とバイト列を転送する。フレームの解析・再実装や HTTP ポーリングは行わない。
 - `GET /chat/endpoint` は watcher の接続時のポート発見用メタデータ。
   ws-lean の場合は `GET /chat-ws/endpoint` で別リスナーを発見する。
   投稿や履歴は返さない。従来の `/health` JSON は変更しない。
-- Origin は `http://127.0.0.1:<HTTPポート>` と
-  `http://localhost:<HTTPポート>` のみ許可。Origin のない接続や他サイトは拒否する。
+- ブラウザーの Origin は `http://127.0.0.1:<HTTPポート>` と
+  `http://localhost:<HTTPポート>` のみ許可する。別サイトは拒否される。
+  `/chat/` と `/chat-ws/` は Origin のない接続も拒否し、
+  `/chat-same-port/` と `/ws-echo/socket` は非ブラウザー接続（Origin なし）を許可する。
   プレビューは自身の Host/Origin を検証してから内部 Origin に変換する。
-- 通常起動をリモートからポート転送する場合は HTTP と WebSocket の両ポートが必要。
-  watcher 経由のローカルプレビューでは一つのポートで済む。
+- `/chat/`、`/chat-ws/`、`/pong/` を通常起動でリモートから使う場合は
+  HTTP と WebSocket の両ポートが必要。`/chat-same-port/` は HTTP ポートのみでよい。
+  watcher 経由のローカルプレビューではいずれも一つのポートで済む。
   公開ドメイン、任意の Origin、TLS 終端の設定はこのローカルサンプルの対象外。
 
 ## プロトコル
 
-チャットはパス `/chat/socket`、サブプロトコル `leanwebstudy-chat`、
-UTF-8 JSON text message。
+`/chat/` と `/chat-ws/` は、それぞれ `/chat/socket` と `/chat-ws/socket`、
+サブプロトコル `leanwebstudy-chat`、UTF-8 JSON text message を使う。
+`/chat-same-port/` は `/chat-same-port/socket` を使い、サブプロトコルを要求しない。
 
 クライアントから:
 
@@ -271,14 +304,16 @@ python3 -m unittest discover -s tests -p 'test_chat.py'
 python3 -m unittest discover -s tests -p 'test_dev*.py'
 ```
 
-チャットテストは自分で起動・停止する実サーバーに対して、両WebSocket実装で共通の複数接続への配信、
+チャットテストは自分で起動・停止する実サーバーに対して、3つのWebSocket実装で共通の複数接続への配信、
 履歴・再接続・最新50件、入力・接続数制限、断片化、Ping/Pong、Close、
-Origin・サブプロトコル拒否、Pongのプレイヤー割当・入力検証・中継・切断通知、
+Origin拒否、外部リスナー方式のサブプロトコル拒否、同一ポート方式の履歴分離、
+Pongのプレイヤー割当・入力検証・中継・切断通知、
 プレビュートンネルを検証する。Python 標準ライブラリーのみを使い、
 テストのための WebSocket パッケージは追加しない。
 ws-lean 固有では履歴の分離、8192バイトを超える履歴、同時投稿の配信順、
 Upgrade と同時に届く最初のフレーム、Close 後のデータ無視、Ping/Pong の生存確認、
 無応答切断、未完了 Upgrade の期限も検証する。タイマー検証は実時間で約30秒かかる。
+同一ポート方式のプレビューがポート発見を省略して HTTP backend へ接続することも検証する。
 動的ページは別プロセスで Lean を起動するため、HTTP テストは初回生成を最大30秒待つ。
 watcher 統合テストは更新ごとに全ページを検査し、各更新を最大180秒待つ。
 保存・エラー復旧・追加・削除を繰り返すため、全体で10分以上かかる場合がある。

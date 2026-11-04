@@ -80,10 +80,12 @@ Stop it with Ctrl+C.
 | `POST /wiki/create`, `/wiki/save`, `/wiki/delete` | Create, update, and delete wiki articles |
 | `GET /chat/` | Real-time WebSocket chat page |
 | `GET /chat-ws/` | Equivalent ws-lean WebSocket chat for comparison |
+| `GET /chat-same-port/` | same-port-websocket chat using the HTTP port |
 | `GET /chat-sse/` | SSE chat page (server events + HTTP POST messages) |
 | `GET /chat-sse/events` | Server-Sent Events chat stream |
 | `POST /chat-sse/send` | Validate and broadcast a chat message |
 | `GET /ws-echo/socket` | WebSocket echo on the HTTP port (StdExt upgrade API) |
+| `GET /chat-same-port/socket` | same-port-websocket chat on the HTTP port |
 | `GET /pong/` | WebSocket real-time two-player Pong |
 | `GET /orderbook/` | Interactive limit order book and matching engine demo |
 | `GET /cat/` | IRT 3PL computerized adaptive testing demo with 30 SQLite items and 10 adaptive questions |
@@ -136,9 +138,12 @@ for setup, limits, reconnection behavior, and local-only restrictions, and the
 for the analysis distilled from these implementations.
 The alternative `/chat-sse/` uses an HTTP event stream for server-to-browser
 updates and POST for sending; its latest 50 messages are in-memory and EventSource
-handles reconnection. All three chat implementations are independent and local-only.
-The derived `StdExt` WebSocket work has a same-port `/ws-echo/socket`
-demonstrator covered by `tests/test_ws_std.py`. Its current implementation,
+handles reconnection. The four chat implementations are independent and local-only.
+`/chat-same-port/` uses the `same-port-websocket` upgrade API directly on the
+HTTP server port, without a separate WebSocket listener or port discovery. Its
+chat messages and recent history are independent from the other implementations.
+The same-port `/ws-echo/socket` protocol demonstrator is covered by `tests/test_ws_std.py`.
+Its current implementation,
 separate lifecycle prototype, limitations, and next steps are described in the
 [WebSocket development track (Japanese)](docs/std-websocket/README.md);
 the prototype is not yet wired into the live transport.

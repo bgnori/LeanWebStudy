@@ -1,8 +1,11 @@
+import base64
+import hashlib
 import http.client
 import importlib.util
 import json
 import os
 from pathlib import Path
+import socket
 import tempfile
 import threading
 import unittest
@@ -172,6 +175,54 @@ class ProxyTests(unittest.TestCase):
         code, _, body = self.request("/sqlite/users?x=1")
         self.assertEqual(code, 503)
         self.assertIn(b'fetch("/__dev/status"', body)
+
+    def test_same_port_websocket_tunnels_without_endpoint_discovery(self):
+        class UpgradeBackend(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self):
+                self.server.request_paths.append(self.path)
+                key = self.headers.get("Sec-WebSocket-Key")
+                if self.path != "/chat-same-port/socket" or key is None:
+                    self.send_error(404)
+                    return
+                accept = base64.b64encode(hashlib.sha1(
+                    (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()
+                ).digest()).decode()
+                self.send_response_only(101)
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", accept)
+                self.end_headers()
+                self.wfile.flush()
+                self.close_connection = True
+
+            def log_message(self, *args):
+                pass
+
+        backend = self.serve(UpgradeBackend)
+        backend.request_paths = []
+        self.development.backend_port = backend.server_port
+        self.development.publish("ready", "test")
+        key = base64.b64encode(os.urandom(16)).decode()
+        with socket.create_connection(
+                ("127.0.0.1", self.preview.server_port), timeout=5) as client:
+            client.sendall((
+                "GET /chat-same-port/socket HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{self.preview.server_port}\r\n"
+                f"Origin: http://127.0.0.1:{self.preview.server_port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode())
+            response = bytearray()
+            while not response.endswith(b"\r\n\r\n"):
+                chunk = client.recv(1)
+                self.assertTrue(chunk, "WebSocket proxy closed before handshake")
+                response.extend(chunk)
+        self.assertTrue(response.startswith(b"HTTP/1.1 101 "))
+        self.assertEqual(backend.request_paths, ["/chat-same-port/socket"])
 
     def test_success_injects_generation_and_keeps_json_unchanged(self):
         self.development.publish("ready", "done", advance=True)

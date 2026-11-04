@@ -10,8 +10,10 @@
 `require`で利用し、追従はlakefileの更新で行う）。
 
 - 移転の計画と判断: [websocket-separation-plan.md](https://github.com/bgnori/same-port-websocket/blob/main/docs/websocket-separation-plan.md)
-- 本リポジトリに残るもの: `/ws-echo`エンドポイント（利用側）、
-  [tests/test_ws_std.py](../../tests/test_ws_std.py)（アプリ結合回帰）、
+- 本リポジトリに残るもの: `/ws-echo`のプロトコル実証と
+  `/chat-same-port/`のチャット利用例（利用側）、
+  [tests/test_ws_std.py](../../tests/test_ws_std.py) と
+  [tests/test_chat.py](../../tests/test_chat.py)（アプリ結合回帰）、
   派生元の経緯 [application-study](../application-study/README.md)
   （とくに[WebSocketリスク・リターン報告](../application-study/websocket-risk-return-report.md)）
 - 移転前の経緯はこのディレクトリのgit履歴で辿れる
